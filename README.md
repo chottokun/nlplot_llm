@@ -1,10 +1,12 @@
 # 📝 nlplot
 nlplot: Analysis and visualization module for Natural Language Processing 📈
 
-## New: Japanese Text Analysis Features
-`nlplot` now includes features for analyzing Japanese text using morphological analysis with Janome.
-This allows for calculation of text features like token counts, part-of-speech ratios, etc.
-See the new "Quick Start - Japanese Text Features" section for details.
+## Key Features
+- N-gram bar charts and tree maps
+- Word count histograms and word clouds
+- Co-occurrence networks and sunburst charts
+- **New:** Japanese text analysis (token counts, POS ratios) using Janome.
+- **New (Experimental):** LLM-powered sentiment analysis and text categorization using Langchain, supporting providers like OpenAI and Ollama.
 
 ## Description
 Facilitates the visualization of natural language processing and provides quicker analysis
@@ -21,13 +23,17 @@ You can draw the following graph
 （Tested in English and Japanese）
 
 ## Requirement
-- [python package](https://github.com/takapy0210/nlplot/blob/master/requirements.txt) (includes `pandas`, `plotly`, `janome`, etc.)
+- Python 3.7+
+- Core dependencies: `pandas`, `numpy`, `plotly>=4.12.0`, `matplotlib`, `wordcloud`, `pillow`, `networkx`, `seaborn`, `tqdm`
+- For Japanese text features: `janome`
+- For LLM-based features (experimental): `langchain`, `langchain-openai`, `langchain-community`, `openai`
+- See `requirements.txt` for details.
 
 ## Installation
 ```sh
 pip install nlplot
 ```
-This will install `nlplot` along with its dependencies, including `janome` for Japanese text analysis.
+This will install `nlplot` along with all its dependencies, including those for Japanese text analysis (Janome) and LLM features (Langchain and related packages).
 
 I've posted on [this blog](https://www.takapy.work/entry/2020/05/17/192947) about the specific use. (Japanese)
 
@@ -168,6 +174,88 @@ else:
 
 ```
 
+## ✨ Quick Start - LLM-Powered Text Analysis (Experimental)
+Leverage Large Language Models (LLMs) for sentiment analysis and text categorization. `nlplot` uses [Langchain](https://python.langchain.com/) for flexible LLM integration.
+
+**Important Notes:**
+- Ensure `langchain` and provider-specific packages (e.g., `openai`, `langchain-openai`, `langchain-community`) are installed (they are dependencies of `nlplot`).
+- **API Keys & Costs:** Using cloud LLMs (e.g., OpenAI) requires API keys and may incur costs. Set your API key as an environment variable (e.g., `OPENAI_API_KEY`) or pass it as an argument.
+- **Local LLMs (Ollama):** Requires a running Ollama server with models downloaded (e.g., `ollama pull llama2`). The default URL is `http://localhost:11434`.
+
+### LLM Sentiment Analysis
+```python
+# Assuming npt_llm (NLPlot instance) and sentiment_df are already created as in previous examples.
+# For OpenAI (ensure OPENAI_API_KEY is set or passed via llm_config)
+if nlplot.nlplot.LANGCHAIN_AVAILABLE: # Check if Langchain components were imported successfully by nlplot
+    try:
+        sentiment_openai_df = npt_llm.analyze_sentiment_llm(
+            text_series=sentiment_df['text'],
+            llm_provider="openai",
+            model_name="gpt-3.5-turbo", # Or your preferred model
+            # openai_api_key="your_key_here" # Alternative if not using env var
+        )
+        print("\\nOpenAI Sentiment Analysis Results:")
+        print(sentiment_openai_df)
+    except Exception as e:
+        print(f"OpenAI sentiment analysis example failed: {e}")
+
+    # For Ollama (ensure Ollama is running and model is pulled)
+    try:
+        sentiment_ollama_df = npt_llm.analyze_sentiment_llm(
+            text_series=sentiment_df['text'],
+            llm_provider="ollama",
+            model_name="llama2" # Replace with your available Ollama model
+            # base_url="http://custom_ollama_host:11434" # If not default
+        )
+        print("\\nOllama Sentiment Analysis Results:")
+        print(sentiment_ollama_df)
+    except Exception as e:
+        print(f"Ollama sentiment analysis example failed: {e}")
+else:
+    print("Langchain support is not available in this nlplot build/environment.")
+```
+
+### LLM Text Categorization
+```python
+# Assuming npt_llm is an NLPlot instance
+texts_for_categorization = [
+    "The stock market hit a new record high today.",
+    "The local football team secured a dramatic win in the finals.",
+    "Scientists announced a breakthrough in renewable energy research.",
+    "This new AI gadget is great for gaming and office work."
+]
+categorization_df = pd.DataFrame({'text': texts_for_categorization})
+defined_categories = ["finance", "sports", "science", "technology", "gaming", "office work"]
+
+if nlplot.nlplot.LANGCHAIN_AVAILABLE:
+    try:
+        # Single-label categorization with OpenAI
+        cat_openai_single_df = npt_llm.categorize_text_llm(
+            text_series=categorization_df['text'],
+            categories=defined_categories,
+            llm_provider="openai",
+            model_name="gpt-3.5-turbo",
+            multi_label=False
+        )
+        print("\\nOpenAI Single-label Categorization Results:")
+        print(cat_openai_single_df)
+
+        # Multi-label categorization with Ollama
+        cat_ollama_multi_df = npt_llm.categorize_text_llm(
+            text_series=categorization_df['text'], # Can use the same series
+            categories=defined_categories,
+            llm_provider="ollama",
+            model_name="llama2", # Replace with your model
+            multi_label=True
+        )
+        print("\\nOllama Multi-label Categorization Results:")
+        print(cat_ollama_multi_df)
+    except Exception as e:
+        print(f"LLM categorization example failed: {e}")
+else:
+    print("Langchain support is not available. Skipping LLM categorization examples.")
+```
+
 ## Document
 TBD
 
@@ -188,4 +276,9 @@ pytest
   - You can specify a custom font using the `font_path` parameter in `NLPlot()` constructor or `npt.wordcloud()`.
   - `nlplot` includes enhanced handling for cases where specified fonts are not found or are invalid, attempting to fall back to a default font and providing warnings to the user.
   - MPLUS Font: https://mplus-fonts.osdn.jp/about.html
-- For Japanese text analysis features (like `get_japanese_text_features`), `nlplot` uses Janome for morphological analysis. Ensure `janome` is installed (it's a dependency).
+- For Japanese text analysis features (e.g., `get_japanese_text_features`), `nlplot` uses Janome for morphological analysis.
+- **LLM Features (Experimental):**
+    - LLM-based features like `analyze_sentiment_llm` and `categorize_text_llm` depend on `langchain` and associated provider packages (e.g., `openai`, `langchain-openai`, `langchain-community`). These are included as dependencies.
+    - **API Keys & Costs:** Using cloud-based LLMs (e.g., OpenAI) typically requires API keys and may incur costs. Set API keys via environment variables (e.g., `OPENAI_API_KEY`) or pass them as arguments to the respective methods.
+    - **Local LLMs (Ollama):** To use Ollama, ensure your Ollama server is running and the desired models are downloaded (e.g., `ollama pull llama2`). The default connection URL is `http://localhost:11434` but can be configured.
+    - **Output Variability:** LLM outputs can vary. The parsing logic for sentiment and categories is designed to be somewhat flexible, but for critical applications, review and potentially customize prompts or parsing.

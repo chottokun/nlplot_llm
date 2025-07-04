@@ -21,136 +21,85 @@ from plotly.offline import iplot
 from wordcloud import WordCloud
 import networkx as nx
 from networkx.algorithms import community
+from typing import Optional, List, Any
 
 # Default path for Japanese Font, can be overridden
 DEFAULT_FONT_PATH = str(os.path.dirname(__file__)) + '/data/mplus-1c-regular.ttf'
 
 try:
     from janome.tokenizer import Tokenizer as JanomeTokenizer
-    # from janome.tokenizer import Token as JanomeToken # For type hinting if needed later
     JANOME_AVAILABLE = True
 except ImportError:
     JANOME_AVAILABLE = False
-    # Define dummy classes or None if Janome is not available,
-    # so type hints or isinstance checks don't break if Janome isn't installed.
     class JanomeTokenizer: # type: ignore
         def tokenize(self, text: str, stream=False, wakati=False): # type: ignore
-            return [] # Return empty list if called
+            return []
     # class JanomeToken: pass
+
+# Langchain related imports
+try:
+    from langchain_openai import ChatOpenAI
+    from langchain_community.chat_models.ollama import OllamaChat
+    from langchain_core.language_models.chat_models import BaseChatModel
+    from langchain_core.prompts import PromptTemplate
+    from langchain_core.outputs import AIMessage
+    from langchain_text_splitters import RecursiveCharacterTextSplitter, CharacterTextSplitter
+    LANGCHAIN_AVAILABLE = True
+except ImportError:
+    LANGCHAIN_AVAILABLE = False
+    class ChatOpenAI: pass # type: ignore
+    class OllamaChat: pass # type: ignore
+    class BaseChatModel: pass # type: ignore
+    class PromptTemplate: pass # type: ignore
+    class AIMessage: # type: ignore
+        def __init__(self, content=""): self.content = content
+    class RecursiveCharacterTextSplitter: # type: ignore
+        def __init__(self, chunk_size=None, chunk_overlap=None, length_function=None, **kwargs): pass
+        def split_text(self, text: str) -> List[str]: return [text] if text else []
+    class CharacterTextSplitter: # type: ignore
+        def __init__(self, separator=None, chunk_size=None, chunk_overlap=None, length_function=None, **kwargs): pass
+        def split_text(self, text: str) -> List[str]: return [text] if text else []
 
 
 def _ranked_topics_for_edges(batch_list: list) -> list:
-    """Sorts a list of topics (words). Helper for edge generation."""
     return sorted(list(map(str, batch_list)))
 
 def _unique_combinations_for_edges(batch_list: list) -> list:
-    """Creates unique combinations of topics from a sorted list. Helper for edge generation."""
     return list(itertools.combinations(_ranked_topics_for_edges(batch_list), 2))
 
 def _add_unique_combinations_to_dict(unique_combs: list, combo_dict: dict) -> dict:
-    """Counts occurrences of combinations. Helper for edge generation."""
     for combination in unique_combs:
         combo_dict[combination] = combo_dict.get(combination, 0) + 1
     return combo_dict
 
-
 def get_colorpalette(colorpalette: str, n_colors: int) -> list:
-    """Get a color palette
-
-    Args:
-        colorpalette (str): cf.https://qiita.com/SaitoTsutomu/items/c79c9973a92e1e2c77a7 .
-        n_colors (int): Number of colors to be displayed.
-
-    Returns:
-        list of str: e.g. ['rgb(220.16,95.0272,87.03)', 'rgb(220.16,209.13005714285714,87.03)', ...]
-    """
     if not isinstance(n_colors, int) or n_colors <= 0:
         raise ValueError("n_colors must be a positive integer")
     palette = sns.color_palette(colorpalette, n_colors)
-    rgb = ['rgb({},{},{})'.format(*[x*256 for x in rgb_val]) for rgb_val in palette]
-    return rgb
-
+    return ['rgb({},{},{})'.format(*[x*256 for x in rgb_val]) for rgb_val in palette]
 
 def generate_freq_df(value: pd.Series, n_gram: int = 1, top_n: int = 50, stopwords: list = [],
                      verbose: bool = True) -> pd.DataFrame:
-    """Generate a data frame of frequent word
-
-    Args:
-        value (pd.Series): Separated by space values.
-        n_gram (int, optional): N number of N grams. Dafaults to 1.
-        top_n (int, optional): N to get TOP N. Dafaults to 50.
-        stopwords (list of str, optional): A list of words to specify for the stopword.
-        verbose (bool, optional): Whether or not to output the log by tqdm.
-
-    Returns:
-        pd.DataFrame: frequent word DataFrame
-    """
     if not isinstance(n_gram, int) or n_gram <= 0:
         raise ValueError("n_gram must be a positive integer")
     if not isinstance(top_n, int) or top_n < 0:
         raise ValueError("top_n must be a non-negative integer")
-
-    def generate_ngrams(text: str, n_gram: int = 1) -> list:
-        """Generate ngram
-
-        Args:
-            text (str): Target text
-            n_gram (int, optional): N number of N grams. Defaults to 1.
-
-        Returns:
-            list of str: ngram list
-        """
-        token = [token for token in str(text).lower().split(" ")  # Ensure text is string
-                 if token != "" if token not in stopwords]
-        ngrams = zip(*[token[i:] for i in range(n_gram)])
-        return [" ".join(ngram) for ngram in ngrams]
-
+    def generate_ngrams(text: str, n_gram_val: int = 1) -> list: # Renamed n_gram to n_gram_val
+        token = [t for t in str(text).lower().split(" ") if t != "" and t not in stopwords]
+        ngrams_zip = zip(*[token[i:] for i in range(n_gram_val)])
+        return [" ".join(ngram) for ngram in ngrams_zip]
     freq_dict = defaultdict(int)
     iterable_value = tqdm(value) if verbose else value
     for sent in iterable_value:
-        for word in generate_ngrams(sent, n_gram): # Pass sent directly
-            freq_dict[word] += 1
-
-    # frequent word DataFrame
+        for word in generate_ngrams(sent, n_gram): freq_dict[word] += 1
     output_df = pd.DataFrame(sorted(freq_dict.items(), key=lambda x: x[1])[::-1])
-    if not output_df.empty:
-        output_df.columns = ['word', 'word_count']
-    else:
-        output_df = pd.DataFrame(columns=['word', 'word_count'])
+    if not output_df.empty: output_df.columns = ['word', 'word_count']
+    else: output_df = pd.DataFrame(columns=['word', 'word_count'])
     return output_df.head(top_n)
 
-
 class NLPlot():
-    """Visualization Module for Natural Language Processing
-
-    Attributes:
-        df (pd.DataFrame): Original dataframe to be graphed.
-        target_col (str): Name of the column in `df` to be analyzed.
-                          Assumes this column contains text data that will be tokenized (if not already a list of strings).
-        output_file_path (str): Default directory path to save generated plots and tables.
-        default_stopwords_file_path (str): Path to a file containing default stopwords, one per line.
-        font_path (str): Default path to the font file (e.g., TTF) to be used for plots like word clouds.
-                         If None, uses a bundled default font.
-
-    """
-    def __init__(
-        self, df: pd.DataFrame,
-        target_col: str,
-        output_file_path: str = './',
-        default_stopwords_file_path: str = '',
-        font_path: str = None
-    ):
-        """
-        Initializes the NLPlot object.
-
-        Args:
-            df (pd.DataFrame): The input DataFrame.
-            target_col (str): The name of the column containing text to analyze.
-            output_file_path (str, optional): Directory to save outputs. Defaults to './'.
-            default_stopwords_file_path (str, optional): Path to a custom stopwords file. Defaults to ''.
-            font_path (str, optional): Path to a .ttf font file for word clouds.
-                                       If None, a default font is used. Defaults to None.
-        """
+    def __init__( self, df: pd.DataFrame, target_col: str, output_file_path: str = './',
+                  default_stopwords_file_path: str = '', font_path: str = None):
         self.df = df.copy()
         self.target_col = target_col
         self.df.dropna(subset=[self.target_col], inplace=True)
@@ -159,983 +108,458 @@ class NLPlot():
             self.df.loc[:, self.target_col] = self.df[self.target_col].astype(str).map(lambda x: x.split())
         self.output_file_path = output_file_path
         self.font_path = font_path if font_path and os.path.exists(font_path) else DEFAULT_FONT_PATH
-        if font_path and not os.path.exists(font_path): # User specified a font, but it wasn't found
+        if font_path and not os.path.exists(font_path):
             print(f"Warning: Specified font_path '{font_path}' not found. Falling back to default: {self.font_path}")
-
         if not os.path.exists(self.font_path):
             print(f"Warning: The determined font path '{self.font_path}' does not exist. WordCloud may fail if a valid font is not provided at runtime or if the default font is missing.")
-
         self.default_stopwords = []
         if default_stopwords_file_path and os.path.exists(default_stopwords_file_path):
             try:
                 with open(default_stopwords_file_path, 'r', encoding='utf-8') as f:
                     self.default_stopwords = [line.strip() for line in f if line.strip()]
-            except PermissionError:
-                print(f"Warning: Permission denied to read stopwords file '{default_stopwords_file_path}'. Continuing without these default stopwords.")
-                self.default_stopwords = []
-            except IOError as e:
-                print(f"Warning: Could not read stopwords file '{default_stopwords_file_path}' due to an IO error: {e}. Continuing without these default stopwords.")
-                self.default_stopwords = []
-            except Exception as e:
-                print(f"Warning: An unexpected error occurred while reading stopwords file '{default_stopwords_file_path}': {e}. Continuing without these default stopwords.")
-                self.default_stopwords = []
-
-        # Initialize Janome Tokenizer
+            except PermissionError: print(f"Warning: Permission denied to read stopwords file '{default_stopwords_file_path}'. Continuing without these default stopwords.")
+            except IOError as e: print(f"Warning: Could not read stopwords file '{default_stopwords_file_path}' due to an IO error: {e}. Continuing without these default stopwords.")
+            except Exception as e: print(f"Warning: An unexpected error occurred while reading stopwords file '{default_stopwords_file_path}': {e}. Continuing without these default stopwords.")
         self._janome_tokenizer = None
         if JANOME_AVAILABLE:
-            try:
-                # You might want to specify a user dictionary path or other options here if needed.
-                # For now, use default tokenizer.
-                self._janome_tokenizer = JanomeTokenizer()
-            except Exception as e:
-                print(f"Warning: Failed to initialize Janome Tokenizer. Japanese text features may not be available. Error: {e}")
-                # self._janome_tokenizer remains None
-        # If JANOME_AVAILABLE is False, self._janome_tokenizer also remains None.
+            try: self._janome_tokenizer = JanomeTokenizer()
+            except Exception as e: print(f"Warning: Failed to initialize Janome Tokenizer. Japanese text features may not be available. Error: {e}")
 
-    def _tokenize_japanese_text(self, text: str) -> list: # list[JanomeToken]
-        """
-        Tokenizes Japanese text using Janome.
-        Returns a list of Janome Token objects.
-        If Janome is not available or fails, returns an empty list and prints a warning.
-        """
-        if not JANOME_AVAILABLE:
-            print("Warning: Janome is not installed. Japanese tokenization is not available. Please install Janome (e.g., pip install janome).")
-            return []
-        if self._janome_tokenizer is None:
-            print("Warning: Janome Tokenizer is not available (it may have failed to initialize). Japanese tokenization cannot be performed.")
-            return []
-        if not isinstance(text, str) or not text.strip(): # Also check for empty or whitespace-only strings
-            return []
-
-        try:
-            # Janome's tokenizer returns a generator, so convert to list.
-            tokens = list(self._janome_tokenizer.tokenize(text))
-            return tokens
-        except Exception as e:
-            print(f"Error during Janome tokenization for text '{text[:30]}...': {e}")
-            return []
+    def _tokenize_japanese_text(self, text: str) -> list:
+        if not JANOME_AVAILABLE: print("Warning: Janome is not installed. Japanese tokenization is not available. Please install Janome (e.g., pip install janome)."); return []
+        if self._janome_tokenizer is None: print("Warning: Janome Tokenizer is not available (it may have failed to initialize). Japanese tokenization cannot be performed."); return []
+        if not isinstance(text, str) or not text.strip(): return []
+        try: return list(self._janome_tokenizer.tokenize(text))
+        except Exception as e: print(f"Error during Janome tokenization for text '{text[:30]}...': {e}"); return []
 
     def get_japanese_text_features(self, japanese_text_series: pd.Series) -> pd.DataFrame:
-        """
-        Calculates various features for a series of Japanese texts using Janome morphological analyzer.
-
-        Args:
-            japanese_text_series (pd.Series): A pandas Series containing Japanese text strings.
-
-        Returns:
-            pd.DataFrame: A DataFrame where each row corresponds to an input text and columns
-                          represent calculated features:
-                          - 'text': The original input text.
-                          - 'total_tokens': Total number of tokens (including punctuation).
-                          - 'avg_token_length': Average length of tokens (excluding punctuation,
-                                              calculated as total characters of non-punctuation tokens
-                                              divided by the count of non-punctuation tokens).
-                                              Returns 0.0 if no non-punctuation tokens.
-                          - 'noun_ratio': Ratio of noun tokens to total tokens. Returns 0.0 if no tokens.
-                          - 'verb_ratio': Ratio of verb tokens (independent verbs) to total tokens. Returns 0.0 if no tokens.
-                          - 'adj_ratio': Ratio of adjective tokens (independent adjectives) to total tokens. Returns 0.0 if no tokens.
-                          - 'punctuation_count': Count of punctuation marks (句点「。」, 読点「、」).
-
-        Notes:
-            - Requires Janome to be installed and available. If Janome is not available or if the
-              tokenizer failed to initialize, this method will print a warning (via
-              `_tokenize_japanese_text`) and typically return features with values of 0 or 0.0.
-            - 品詞の分類 (名詞、動詞、形容詞) はJanomeの品詞体系に基づきます。
-              動詞は自立語 ('動詞,自立') のみ、形容詞は自立語 ('形容詞,自立') のみをカウント対象とします。
-            - Non-string entries in the input Series will result in features with values of 0 or 0.0.
-        """
-        # Check for Janome availability globally for the method if needed, though _tokenize_japanese_text handles it.
-        # if not JANOME_AVAILABLE or self._janome_tokenizer is None:
-        #     # This case is largely handled by _tokenize_japanese_text returning [] and subsequent logic.
-        #     # However, if the series itself is empty, handle that first.
-        #     # print("Warning: Janome not available/initialized. Cannot calculate Japanese text features accurately.")
-        #     # Fallback to returning an empty or NaN-filled DataFrame matching expected structure.
-        #     # This is complex if japanese_text_series is not empty.
-        #     # The current design relies on _tokenize_japanese_text handling Janome's absence per call.
-        #     pass
-
         results = []
-        expected_columns = ['text', 'total_tokens', 'avg_token_length',
-                            'noun_ratio', 'verb_ratio', 'adj_ratio', 'punctuation_count']
-
-        if not isinstance(japanese_text_series, pd.Series):
-            print("Warning: Input must be a pandas Series. Returning empty DataFrame.")
-            return pd.DataFrame(columns=expected_columns)
-
-        if japanese_text_series.empty:
-            return pd.DataFrame(columns=expected_columns)
-
+        expected_columns = ['text', 'total_tokens', 'avg_token_length', 'noun_ratio', 'verb_ratio', 'adj_ratio', 'punctuation_count']
+        if not isinstance(japanese_text_series, pd.Series): print("Warning: Input must be a pandas Series. Returning empty DataFrame."); return pd.DataFrame(columns=expected_columns)
+        if japanese_text_series.empty: return pd.DataFrame(columns=expected_columns)
         for text_input in japanese_text_series:
-            original_text = str(text_input) if pd.notna(text_input) else "" # Store original text, convert NaNs to empty string
-
-            if pd.isna(text_input) or not isinstance(text_input, str):
-                tokens = []
-            else:
-                tokens = self._tokenize_japanese_text(text_input)
-
+            original_text = str(text_input) if pd.notna(text_input) else ""
+            tokens = self._tokenize_japanese_text(text_input) if pd.notna(text_input) and isinstance(text_input, str) else []
             total_tokens = len(tokens)
-
             if total_tokens == 0:
-                results.append({
-                    'text': original_text, 'total_tokens': 0, 'avg_token_length': 0.0,
-                    'noun_ratio': 0.0, 'verb_ratio': 0.0, 'adj_ratio': 0.0, 'punctuation_count': 0
-                })
+                results.append({'text': original_text, 'total_tokens': 0, 'avg_token_length': 0.0, 'noun_ratio': 0.0, 'verb_ratio': 0.0, 'adj_ratio': 0.0, 'punctuation_count': 0})
                 continue
-
-            # Filter out punctuation for average token length calculation and specific counts
-            non_punctuation_tokens = [
-                t for t in tokens if not (
-                    t.part_of_speech.startswith('記号,句点') or
-                    t.part_of_speech.startswith('記号,読点')
-                    # Consider other symbols if necessary: or t.part_of_speech.startswith('記号')
-                )
-            ]
-
+            non_punctuation_tokens = [t for t in tokens if not (t.part_of_speech.startswith('記号,句点') or t.part_of_speech.startswith('記号,読点'))]
             num_non_punctuation_tokens = len(non_punctuation_tokens)
-            if num_non_punctuation_tokens > 0:
-                sum_token_lengths = sum(len(t.surface) for t in non_punctuation_tokens)
-                avg_token_length = sum_token_lengths / num_non_punctuation_tokens
-            else:
-                avg_token_length = 0.0
-
+            avg_token_length = sum(len(t.surface) for t in non_punctuation_tokens) / num_non_punctuation_tokens if num_non_punctuation_tokens > 0 else 0.0
             nouns = [t for t in tokens if t.part_of_speech.startswith('名詞')]
             verbs = [t for t in tokens if t.part_of_speech.startswith('動詞,自立')]
             adjectives = [t for t in tokens if t.part_of_speech.startswith('形容詞,自立')]
-
-            punctuations_list = [t for t in tokens if t.part_of_speech.startswith('記号,句点') or \
-                                                     t.part_of_speech.startswith('記号,読点')]
-
-            results.append({
-                'text': original_text,
-                'total_tokens': total_tokens,
-                'avg_token_length': avg_token_length,
-                'noun_ratio': len(nouns) / total_tokens if total_tokens > 0 else 0.0,
-                'verb_ratio': len(verbs) / total_tokens if total_tokens > 0 else 0.0,
-                'adj_ratio': len(adjectives) / total_tokens if total_tokens > 0 else 0.0,
-                'punctuation_count': len(punctuations_list)
-            })
-
+            punctuations_list = [t for t in tokens if t.part_of_speech.startswith('記号,句点') or t.part_of_speech.startswith('記号,読点')]
+            results.append({'text': original_text, 'total_tokens': total_tokens, 'avg_token_length': avg_token_length,
+                            'noun_ratio': len(nouns) / total_tokens, 'verb_ratio': len(verbs) / total_tokens,
+                            'adj_ratio': len(adjectives) / total_tokens, 'punctuation_count': len(punctuations_list)})
         return pd.DataFrame(results, columns=expected_columns)
 
     def get_stopword(self, top_n: int = 10, min_freq: int = 5) -> list:
-        """Calculate the stop word.
-
-        Calculate the top_n words with the highest number of occurrences
-        and the words that occur only below the min_freq as stopwords.
-
-        Args:
-            top_n (int, optional): Top N of the number of occurrences of words to exclude. Defaults to 10.
-            min_freq (int, optional): Bottom of the number of occurrences of words to exclude. Defaults to 5.
-
-        Returns:
-            list: list of stop words
-        """
-        if not isinstance(top_n, int) or top_n < 0:
-            raise ValueError("top_n must be a non-negative integer.")
-        if not isinstance(min_freq, int) or min_freq < 0:
-            raise ValueError("min_freq must be a non-negative integer.")
-
+        if not isinstance(top_n, int) or top_n < 0: raise ValueError("top_n must be a non-negative integer.")
+        if not isinstance(min_freq, int) or min_freq < 0: raise ValueError("min_freq must be a non-negative integer.")
         fdist = Counter()
-
-        # Count the number of occurrences per word.
         for doc in self.df[self.target_col]:
-            if isinstance(doc, list): #Ensure doc is a list of words
-                for word in doc:
-                    fdist[word] += 1
-            # else: handle cases where doc might not be a list, or raise error
-        # word with a high frequency
+            if isinstance(doc, list):
+                for word in doc: fdist[word] += 1
         common_words = {word for word, freq in fdist.most_common(top_n)}
-        # word with a low frequency
         rare_words = {word for word, freq in fdist.items() if freq <= min_freq}
         stopwords = list(common_words.union(rare_words))
-        # Add default stopwords, ensuring no duplicates
         stopwords.extend([sw for sw in self.default_stopwords if sw not in stopwords])
         return stopwords
 
-    def bar_ngram(
-        self,
-        title: str = None,
-        xaxis_label: str = '',
-        yaxis_label: str = '',
-        ngram: int = 1,
-        top_n: int = 50,
-        width: int = 800,
-        height: int = 1100,
-        color: str = None,
-        horizon: bool = True,
-        stopwords: list = [],
-        verbose: bool = True,
-        save: bool = False
-    ) -> plotly.graph_objs.Figure:
-        """Plots of n-gram bar chart
-        # ... (docstringはそのまま)
-        """
-        # Combine provided stopwords with default stopwords, avoid duplicates
+    def bar_ngram(self, title: str = None, xaxis_label: str = '', yaxis_label: str = '', ngram: int = 1, top_n: int = 50, width: int = 800, height: int = 1100, color: str = None, horizon: bool = True, stopwords: list = [], verbose: bool = True, save: bool = False) -> plotly.graph_objs.Figure:
         current_stopwords = list(set(stopwords + self.default_stopwords))
-
-        # Prepare data for n-gram generation (ensure it's a series of space-separated strings)
-        # NLPlot constructor already converts target_col to list of words.
-        # generate_freq_df expects a Series of space-separated strings.
         temp_series = self.df[self.target_col].apply(lambda x: ' '.join(x) if isinstance(x, list) else str(x))
-
-        self.ngram_df = generate_freq_df(
-            temp_series,
-            n_gram=ngram,
-            top_n=top_n,
-            stopwords=current_stopwords,
-            verbose=verbose
-        )
-
-        if self.ngram_df.empty:
-             print("Warning: No data to plot for bar_ngram after processing. Empty DataFrame.")
-             # Return an empty figure or handle as appropriate
-             return go.Figure()
-
-
-        if horizon:
-            fig = px.bar(
-                self.ngram_df.sort_values('word_count'),
-                y='word',
-                x='word_count',
-                text='word_count',
-                orientation='h',)
-        else:
-            fig = px.bar(
-                self.ngram_df,
-                y='word_count',
-                x='word',
-                text='word_count',)
-
-        fig.update_traces(
-            texttemplate='%{text:.2s}',
-            textposition='auto',
-            marker_color=color,)
-        fig.update_layout(
-            title=str(title) if title else 'N-gram Bar Chart',
-            xaxis_title=str(xaxis_label),
-            yaxis_title=str(yaxis_label),
-            width=width,
-            height=height,)
-
-        if save:
-            self.save_plot(fig, title if title else "bar_ngram")
-
+        self.ngram_df = generate_freq_df(temp_series, n_gram=ngram, top_n=top_n, stopwords=current_stopwords, verbose=verbose)
+        if self.ngram_df.empty: print("Warning: No data to plot for bar_ngram after processing. Empty DataFrame."); return go.Figure()
+        fig = px.bar(self.ngram_df.sort_values('word_count') if horizon else self.ngram_df,
+                     y='word' if horizon else 'word_count', x='word_count' if horizon else 'word',
+                     text='word_count', orientation='h' if horizon else 'v')
+        fig.update_traces(texttemplate='%{text:.2s}', textposition='auto', marker_color=color)
+        fig.update_layout(title=str(title) if title else 'N-gram Bar Chart', xaxis_title=str(xaxis_label), yaxis_title=str(yaxis_label), width=width, height=height)
+        if save: self.save_plot(fig, title if title else "bar_ngram")
         return fig
 
-    def treemap(
-        self,
-        title: str = None,
-        ngram: int = 1,
-        top_n: int = 50,
-        width: int = 1300,
-        height: int = 600,
-        stopwords: list = [],
-        verbose: bool = True,
-        save: bool = False
-    ) -> plotly.graph_objs.Figure:
-        """Plots of Tree Map
-        # ... (docstringはそのまま)
-        """
+    def treemap(self, title: str = None, ngram: int = 1, top_n: int = 50, width: int = 1300, height: int = 600, stopwords: list = [], verbose: bool = True, save: bool = False) -> plotly.graph_objs.Figure:
         current_stopwords = list(set(stopwords + self.default_stopwords))
         temp_series = self.df[self.target_col].apply(lambda x: ' '.join(x) if isinstance(x, list) else str(x))
-
-        self.treemap_df = generate_freq_df(
-            temp_series,
-            n_gram=ngram,
-            top_n=top_n,
-            stopwords=current_stopwords,
-            verbose=verbose
-        )
-
+        self.treemap_df = generate_freq_df(temp_series, n_gram=ngram, top_n=top_n, stopwords=current_stopwords, verbose=verbose)
         if self.treemap_df.empty or 'word' not in self.treemap_df.columns or 'word_count' not in self.treemap_df.columns:
-            print("Warning: No data to plot for treemap after processing. Empty or malformed DataFrame.")
-            return go.Figure()
-
-        fig = px.treemap(
-            self.treemap_df,
-            path=[px.Constant("all"), 'word'], # Add a root node for better structure if needed
-            values='word_count',
-        )
-        fig.update_layout(
-            title=str(title) if title else 'Treemap',
-            width=width,
-            height=height,
-        )
-
-        if save:
-            self.save_plot(fig, title if title else "treemap")
-
+            print("Warning: No data to plot for treemap after processing. Empty or malformed DataFrame."); return go.Figure()
+        fig = px.treemap(self.treemap_df, path=[px.Constant("all"), 'word'], values='word_count')
+        fig.update_layout(title=str(title) if title else 'Treemap', width=width, height=height)
+        if save: self.save_plot(fig, title if title else "treemap")
         return fig
 
-    def word_distribution(
-        self,
-        title: str = None,
-        xaxis_label: str = '',
-        yaxis_label: str = '',
-        width: int = 1000,
-        height: int = 600,
-        color: str = None,
-        template: str = 'plotly',
-        bins: int = None,
-        save: bool = False
-    ) -> plotly.graph_objs.Figure:
-        """Plots of word count histogram
-        # ... (docstringはそのまま)
-        """
+    def word_distribution(self, title: str = None, xaxis_label: str = '', yaxis_label: str = '', width: int = 1000, height: int = 600, color: str = None, template: str = 'plotly', bins: int = None, save: bool = False) -> plotly.graph_objs.Figure:
         col_name = self.target_col + '_length'
-        # Ensure elements in target_col are lists to correctly calculate length
         self.df.loc[:, col_name] = self.df[self.target_col].apply(lambda x: len(x) if isinstance(x, list) else 0)
-
-        if self.df[col_name].empty:
-            print("Warning: No data to plot for word_distribution.")
-            return go.Figure()
-
+        if self.df[col_name].empty: print("Warning: No data to plot for word_distribution."); return go.Figure()
         fig = px.histogram(self.df, x=col_name, color=color, template=template, nbins=bins)
-        fig.update_layout(
-            title=str(title) if title else 'Word Distribution',
-            xaxis_title=str(xaxis_label) if xaxis_label else 'Number of Words',
-            yaxis_title=str(yaxis_label) if yaxis_label else 'Frequency',
-            width=width,
-            height=height,)
-
-        if save:
-            self.save_plot(fig, title if title else "word_distribution")
-
+        fig.update_layout(title=str(title) if title else 'Word Distribution',
+                          xaxis_title=str(xaxis_label) if xaxis_label else 'Number of Words',
+                          yaxis_title=str(yaxis_label) if yaxis_label else 'Frequency',
+                          width=width, height=height)
+        if save: self.save_plot(fig, title if title else "word_distribution")
         return fig
 
-    def wordcloud(
-        self,
-        width: int = 800,
-        height: int = 500,
-        max_words: int = 100,
-        max_font_size: int = 80,
-        stopwords: list = [],
-        colormap: str = None,
-        mask_file: str = None,
-        font_path: str = None,
-        save: bool = False
-    ) -> None:
-        """Plots of WordCloud
-
-        Args:
-            width (int, optional): Width of the graph. Defaults to 800.
-            height (int, optional): Height of the graph. Defaults to 500.
-            max_words (int, optional): Number of words to display. Defaults to 100.
-            max_font_size (int, optional): Maximum font size for displayed words. Defaults to 80.
-            stopwords (list, optional): A list of stopwords to exclude. Defaults to [].
-            colormap (str, optional): Colormap for the word cloud.
-                                      e.g., 'viridis', 'plasma', cf. matplotlib colormaps. Defaults to None.
-            mask_file (str, optional): Path to an image file to use as a mask for the word cloud. Defaults to None.
-            font_path (str, optional): Path to the font file (.ttf). Overrides the instance's default font_path.
-                                       Defaults to None (uses instance default).
-            save (bool, optional): Whether to save the generated image to a file. Defaults to False.
-
-        Returns:
-            None: Displays the word cloud in IPython and optionally saves it.
-
-        Notes:
-            - Font Handling:
-                The method prioritizes fonts in this order:
-                1. `font_path` argument of this method (if provided and valid).
-                2. `self.font_path` (set during `NLPlot` initialization, can be custom or default).
-                3. `DEFAULT_FONT_PATH` (the library's bundled default font).
-                If a specified font file is not found, a warning is printed, and the next font in priority is attempted.
-                If a font file is found but is invalid (e.g., corrupted, not a TTF), a warning is printed. If this was a custom
-                font, a fallback to the default font (`DEFAULT_FONT_PATH`) is attempted. If the default font itself is invalid
-                or if all fallbacks fail, an error message is printed, and the word cloud will not be generated.
-            - Mask File:
-                If `mask_file` is specified but not found, cannot be read (e.g., due to permissions or file corruption),
-                or is not a valid image format, a warning is printed, and the word cloud is generated without a mask.
-            - Text Processing:
-                Input texts are converted to lowercase. Words are tokenized by spaces.
-                If after applying stopwords, the resulting text corpus is empty, a warning is printed, and no
-                word cloud is generated.
-        """
+    def wordcloud(self, width: int = 800, height: int = 500, max_words: int = 100, max_font_size: int = 80, stopwords: list = [], colormap: str = None, mask_file: str = None, font_path: str = None, save: bool = False) -> None:
         current_font_path = font_path if font_path and os.path.exists(font_path) else self.font_path
-        if font_path and not os.path.exists(font_path): # User specified a font for this call, but it wasn't found
-             print(f"Warning: Specified font_path '{font_path}' for wordcloud not found. Falling back to instance/default: {current_font_path}")
-
-        # current_font_path is now the best candidate (method arg > instance default > library default constant path)
-        # The try-except block below will handle if it's missing or invalid.
-
+        if font_path and not os.path.exists(font_path): print(f"Warning: Specified font_path '{font_path}' for wordcloud not found. Falling back to instance/default: {current_font_path}")
         mask = None
         if mask_file and os.path.exists(mask_file):
-            try:
-                mask = np.array(Image.open(mask_file))
-            except PermissionError:
-                print(f"Warning: Permission denied to read mask file {mask_file}. Proceeding without mask.")
-                mask = None
-            except IOError as e:
-                print(f"Warning: Could not load mask file {mask_file} due to an IO error: {e}. Proceeding without mask.")
-                mask = None
-            except Exception as e: # Other PIL errors
-                print(f"Warning: Could not load mask file {mask_file}: {e}. Proceeding without mask.")
-                mask = None
-        elif mask_file: # Path provided but os.path.exists was false
-            print(f"Warning: Mask file {mask_file} not found. Proceeding without mask.")
-
-
-        # Ensure elements in target_col are lists of strings, then join them
-        # Filter out non-list elements or convert them appropriately
-        processed_texts = []
-        for item in self.df[self.target_col]:
-            if isinstance(item, list):
-                processed_texts.append(' '.join(map(str, item))) # Ensure all elements in list are strings
-            elif isinstance(item, str):
-                processed_texts.append(item)
-            # else: skip or log warning for unexpected types
-
-        if not processed_texts:
-            print("Warning: No text data available for wordcloud after processing.")
-            return
-
+            try: mask = np.array(Image.open(mask_file))
+            except PermissionError: print(f"Warning: Permission denied to read mask file {mask_file}. Proceeding without mask."); mask = None
+            except IOError as e: print(f"Warning: Could not load mask file {mask_file} due to an IO error: {e}. Proceeding without mask."); mask = None
+            except Exception as e: print(f"Warning: Could not load mask file {mask_file}: {e}. Proceeding without mask."); mask = None
+        elif mask_file: print(f"Warning: Mask file {mask_file} not found. Proceeding without mask.")
+        processed_texts = [' '.join(map(str, item)) if isinstance(item, list) else (item if isinstance(item, str) else "") for item in self.df[self.target_col]]
+        if not processed_texts: print("Warning: No text data available for wordcloud after processing."); return
         text_corpus = ' '.join(processed_texts)
-        current_stopwords = set(stopwords + self.default_stopwords) # Use set for efficient lookup
-
-        if not text_corpus.strip():
-             print("Warning: Text corpus is empty after processing stopwords for wordcloud.")
-             return
-
-        wordcloud_instance = WordCloud(
-                        background_color='white',
-                        font_step=1,
-                        contour_width=0,
-                        contour_color='steelblue',
-                        font_path=current_font_path,
-                        stopwords=current_stopwords,
-                        max_words=max_words,
-                        max_font_size=max_font_size,
-                        random_state=42,
-                        width=width,
-                        height=height,
-                        mask=mask,
-                        collocations=False, # Default is True, but often set to False
-                        prefer_horizontal=1,
-                        colormap=colormap)
+        current_stopwords = set(stopwords + self.default_stopwords)
+        if not text_corpus.strip(): print("Warning: Text corpus is empty after processing stopwords for wordcloud."); return
         try:
-            # First attempt with current_font_path
-            if not os.path.exists(current_font_path): # Check before attempting to use
-                 raise OSError(f"Font file not found at {current_font_path}")
-
-            wordcloud_instance = WordCloud(
-                            background_color='white', font_step=1, contour_width=0, contour_color='steelblue',
-                            font_path=current_font_path, stopwords=current_stopwords, max_words=max_words,
-                            max_font_size=max_font_size, random_state=42, width=width, height=height,
-                            mask=mask, collocations=False, prefer_horizontal=1, colormap=colormap)
+            if not os.path.exists(current_font_path): raise OSError(f"Font file not found at {current_font_path}")
+            wordcloud_instance = WordCloud(font_path=current_font_path, stopwords=current_stopwords, max_words=max_words,max_font_size=max_font_size, random_state=42, width=width, height=height,mask=mask, collocations=False, prefer_horizontal=1, colormap=colormap, background_color='white', font_step=1, contour_width=0, contour_color='steelblue')
             wordcloud_instance.generate(text_corpus)
-
-        except (OSError, TypeError) as e: # Errors related to font file issues (not found, wrong type, corrupted)
+        except (OSError, TypeError) as e:
             print(f"Warning: Error processing font at '{current_font_path}': {e}.")
-            # Attempt to fallback to DEFAULT_FONT_PATH if current_font_path wasn't already it AND DEFAULT_FONT_PATH exists
             if current_font_path != DEFAULT_FONT_PATH and os.path.exists(DEFAULT_FONT_PATH):
                 print(f"Attempting to fallback to default font: {DEFAULT_FONT_PATH}")
                 try:
-                    current_font_path = DEFAULT_FONT_PATH # Switch to default
-                    wordcloud_instance = WordCloud(
-                                    background_color='white', font_step=1, contour_width=0, contour_color='steelblue',
-                                    font_path=current_font_path, stopwords=current_stopwords, max_words=max_words,
-                                    max_font_size=max_font_size, random_state=42, width=width, height=height,
-                                    mask=mask, collocations=False, prefer_horizontal=1, colormap=colormap)
+                    current_font_path = DEFAULT_FONT_PATH
+                    wordcloud_instance = WordCloud(font_path=current_font_path, stopwords=current_stopwords, max_words=max_words,max_font_size=max_font_size, random_state=42, width=width, height=height,mask=mask, collocations=False, prefer_horizontal=1, colormap=colormap, background_color='white', font_step=1, contour_width=0, contour_color='steelblue')
                     wordcloud_instance.generate(text_corpus)
-                except Exception as fallback_e:
-                    print(f"Error: Fallback to default font ('{DEFAULT_FONT_PATH}') also failed: {fallback_e}. WordCloud cannot be generated.")
-                    return
-            elif current_font_path == DEFAULT_FONT_PATH: # The default font itself caused the error
-                 print(f"Error: Default font at '{DEFAULT_FONT_PATH}' seems to be an issue. WordCloud cannot be generated. Details: {e}")
-                 return
-            else: # Default font path does not exist, and the custom one failed
-                 print(f"Error: Default font not found at '{DEFAULT_FONT_PATH}' and custom font failed. WordCloud cannot be generated.")
-                 return
-        except ValueError as e: # Specifically for generate() if text corpus is empty after stopwords
-            if "empty" in str(e).lower() or "zero" in str(e).lower():
-                 print(f"Warning: WordCloud could not be generated. All words might have been filtered out or corpus is empty. Details: {e}")
-                 return
-            else:
-                print(f"An unexpected ValueError occurred during WordCloud generation: {e}") # Other ValueErrors
-                return # Or raise e if it should be fatal
-        except Exception as e: # Catch-all for other unexpected errors
-            print(f"An unexpected error occurred during WordCloud generation: {e}")
-            return
-
-        # If we reach here, wordcloud_instance should be valid and generated.
+                except Exception as fallback_e: print(f"Error: Fallback to default font ('{DEFAULT_FONT_PATH}') also failed: {fallback_e}. WordCloud cannot be generated."); return
+            elif current_font_path == DEFAULT_FONT_PATH: print(f"Error: Default font at '{DEFAULT_FONT_PATH}' seems to be an issue. WordCloud cannot be generated. Details: {e}"); return
+            else: print(f"Error: Default font not found at '{DEFAULT_FONT_PATH}' and custom font failed. WordCloud cannot be generated."); return
+        except ValueError as e:
+            if "empty" in str(e).lower() or "zero" in str(e).lower(): print(f"Warning: WordCloud could not be generated. All words might have been filtered out or corpus is empty. Details: {e}"); return
+            else: print(f"An unexpected ValueError occurred during WordCloud generation: {e}"); return
+        except Exception as e: print(f"An unexpected error occurred during WordCloud generation: {e}"); return
         img_array = wordcloud_instance.to_array()
-
-        # Nested function for display and save
         def show_array(img_array_to_show, save_flag, output_path, filename_prefix_wc):
-            stream = BytesIO()
-            pil_img = Image.fromarray(img_array_to_show)
+            stream = BytesIO(); pil_img = Image.fromarray(img_array_to_show)
             if save_flag:
-                date_str = pd.to_datetime(datetime.datetime.now()).strftime('%Y-%m-%d') # More standard date format
-                filename = f"{date_str}_{filename_prefix_wc}_wordcloud.png"
-                full_save_path = os.path.join(output_path, filename)
-                try:
-                    os.makedirs(output_path, exist_ok=True)
-                    pil_img.save(full_save_path)
-                    print(f"Wordcloud image saved to {full_save_path}")
-                except PermissionError:
-                    print(f"Error: Permission denied to save wordcloud image to '{full_save_path}'. Please check directory permissions.")
-                except Exception as e_save:
-                    print(f"Error saving wordcloud image to '{full_save_path}': {e_save}")
-
-            pil_img.save(stream, 'png') # Save to stream for display
-            IPython.display.display(IPython.display.Image(data=stream.getvalue()))
-
-        show_array(img_array, save, self.output_file_path, "wordcloud_plot")
-        return None
-
+                date_str = pd.to_datetime(datetime.datetime.now()).strftime('%Y-%m-%d'); filename = f"{date_str}_{filename_prefix_wc}_wordcloud.png"; full_save_path = os.path.join(output_path, filename)
+                try: os.makedirs(output_path, exist_ok=True); pil_img.save(full_save_path); print(f"Wordcloud image saved to {full_save_path}")
+                except PermissionError: print(f"Error: Permission denied to save wordcloud image to '{full_save_path}'. Please check directory permissions.")
+                except Exception as e_save: print(f"Error saving wordcloud image to '{full_save_path}': {e_save}")
+            pil_img.save(stream, 'png'); IPython.display.display(IPython.display.Image(data=stream.getvalue()))
+        show_array(img_array, save, self.output_file_path, "wordcloud_plot"); return None
 
     def get_edges_nodes(self, batches: list, min_edge_frequency: int) -> None:
-        """Generating the Edge and Node data frames for a graph
-        # ... (docstringはそのまま)
-        """
-        if not isinstance(min_edge_frequency, int) or min_edge_frequency < 0:
-             raise ValueError("min_edge_frequency must be a non-negative integer.")
-
+        if not isinstance(min_edge_frequency, int) or min_edge_frequency < 0: raise ValueError("min_edge_frequency must be a non-negative integer.")
         edge_dict = {}
         for batch in batches:
-            if isinstance(batch, list) and batch: # Ensure batch is a non-empty list
+            if isinstance(batch, list) and batch:
                  unique_elements_in_batch = list(set(batch))
-                 if len(unique_elements_in_batch) >= 2: # Combinations only if at least 2 unique elements
-                    edge_dict = _add_unique_combinations_to_dict(
-                        _unique_combinations_for_edges(unique_elements_in_batch),
-                        edge_dict
-                    )
-
+                 if len(unique_elements_in_batch) >= 2: edge_dict = _add_unique_combinations_to_dict(_unique_combinations_for_edges(unique_elements_in_batch), edge_dict)
         source, target, edge_frequency_list = [], [], []
-        for key, value in edge_dict.items():
-            source.append(key[0])
-            target.append(key[1])
-            edge_frequency_list.append(value)
-
+        for key, value in edge_dict.items(): source.append(key[0]); target.append(key[1]); edge_frequency_list.append(value)
         edge_df = pd.DataFrame({'source': source, 'target': target, 'edge_frequency': edge_frequency_list})
-        edge_df = edge_df[edge_df['edge_frequency'] > min_edge_frequency].sort_values(
-            by='edge_frequency', ascending=False
-        ).reset_index(drop=True)
-
+        edge_df = edge_df[edge_df['edge_frequency'] > min_edge_frequency].sort_values(by='edge_frequency', ascending=False).reset_index(drop=True)
         if edge_df.empty:
             self.edge_df = pd.DataFrame(columns=['source', 'target', 'edge_frequency', 'source_code', 'target_code'])
-            self.node_df = pd.DataFrame(columns=['id', 'id_code']) # Ensure columns exist even if empty
-            self.node_dict = {}
-            self.edge_dict = edge_dict
-            return
-
+            self.node_df = pd.DataFrame(columns=['id', 'id_code']); self.node_dict = {}; self.edge_dict = edge_dict; return
         unique_nodes = list(set(edge_df['source']).union(set(edge_df['target'])))
         node_df = pd.DataFrame({'id': unique_nodes})
         if not node_df.empty:
-            node_df['id_code'] = node_df.index
-            node_dict = dict(zip(node_df['id'], node_df['id_code']))
-            edge_df['source_code'] = edge_df['source'].map(node_dict)
-            edge_df['target_code'] = edge_df['target'].map(node_dict)
+            node_df['id_code'] = node_df.index; node_dict = dict(zip(node_df['id'], node_df['id_code']))
+            edge_df['source_code'] = edge_df['source'].map(node_dict); edge_df['target_code'] = edge_df['target'].map(node_dict)
             edge_df.dropna(subset=['source_code', 'target_code'], inplace=True)
-        else: # Should not happen if edge_df is not empty, but as a safeguard
-            node_dict = {}
-            # edge_df would be effectively empty of valid codes, or this path means unique_nodes was empty
-            # which contradicts edge_df not being empty. This state indicates an issue.
-            # For safety, clear edge_df if node mapping fails completely.
-            edge_df = pd.DataFrame(columns=['source', 'target', 'edge_frequency', 'source_code', 'target_code'])
-
-
-        self.edge_df = edge_df
-        self.node_df = node_df
-        self.node_dict = node_dict
-        self.edge_dict = edge_dict
-
-        return None
+        else: node_dict = {}; edge_df = pd.DataFrame(columns=['source', 'target', 'edge_frequency', 'source_code', 'target_code'])
+        self.edge_df = edge_df; self.node_df = node_df; self.node_dict = node_dict; self.edge_dict = edge_dict; return None
 
     def get_graph(self) -> nx.Graph:
-        """create Networkx
-        # ... (docstringはそのまま)
-        """
         G = nx.Graph()
-        if not hasattr(self, 'node_df') or self.node_df.empty:
-            print("Warning: Node DataFrame is not initialized or empty. Cannot build graph.")
-            return G # Return empty graph
-
+        if not hasattr(self, 'node_df') or self.node_df.empty: print("Warning: Node DataFrame is not initialized or empty. Cannot build graph."); return G
         G.add_nodes_from(self.node_df.id_code)
-
-        if not hasattr(self, 'edge_df') or self.edge_df.empty:
-            # print("Warning: Edge DataFrame is empty. Graph will have nodes but no edges.")
-            return G # Nodes added, but no edges if edge_df is empty
-
-        edge_tuples = []
-        for i in range(len(self.edge_df)):
-            # Ensure source_code and target_code are integers if they are node IDs
-            # and exist in G.nodes. G.add_edge will handle this.
-            source_node = self.edge_df['source_code'].iloc[i]
-            target_node = self.edge_df['target_code'].iloc[i]
-            edge_tuples.append((source_node, target_node))
-
-        G.add_edges_from(edge_tuples)
-        return G
+        if not hasattr(self, 'edge_df') or self.edge_df.empty: return G
+        edge_tuples = [(self.edge_df['source_code'].iloc[i], self.edge_df['target_code'].iloc[i]) for i in range(len(self.edge_df))]
+        G.add_edges_from(edge_tuples); return G
 
     def build_graph(self, stopwords: list = [], min_edge_frequency: int = 10) -> None:
-        """Preprocessing to output a co-occurrence network."""
-        self._prepare_data_for_graph(stopwords)
-        self.get_edges_nodes(self._batches, min_edge_frequency) # Use self._batches
-
-        if self.node_df.empty:
-            self._initialize_empty_graph_attributes()
-            print('Warning: No nodes found after processing for build_graph. Co-occurrence network cannot be built.')
-            print('node_size:0, edge_size:0')
-            return
-
+        self._prepare_data_for_graph(stopwords); self.get_edges_nodes(self._batches, min_edge_frequency)
+        if self.node_df.empty: self._initialize_empty_graph_attributes(); print('Warning: No nodes found after processing for build_graph. Co-occurrence network cannot be built.'); print('node_size:0, edge_size:0'); return
         self.G = self.get_graph()
-        if not self.G.nodes():
-            self._initialize_empty_graph_attributes(graph_exists_but_no_nodes=True)
-            print('Warning: Graph has no nodes. Further calculations for co-occurrence network will be skipped.')
-            print(f'node_size:{len(self.node_df)}, edge_size:{len(self.edge_df if hasattr(self, "edge_df") else [])}')
-            return
-
-        self._calculate_graph_metrics()
-        self._detect_communities()
-
-        print(f'node_size:{len(self.node_df)}, edge_size:{len(self.edge_df if hasattr(self, "edge_df") else [])}')
-        return None
+        if not self.G.nodes(): self._initialize_empty_graph_attributes(graph_exists_but_no_nodes=True); print('Warning: Graph has no nodes. Further calculations for co-occurrence network will be skipped.'); print(f'node_size:{len(self.node_df)}, edge_size:{len(self.edge_df if hasattr(self, "edge_df") else [])}'); return
+        self._calculate_graph_metrics(); self._detect_communities()
+        print(f'node_size:{len(self.node_df)}, edge_size:{len(self.edge_df if hasattr(self, "edge_df") else [])}'); return None
 
     def _prepare_data_for_graph(self, stopwords_param: list):
-        """Helper to prepare data (self.df_edit, self._batches) for graph building."""
         current_stopwords = list(set(stopwords_param + self.default_stopwords))
         self.df_edit = self.df.copy()
-        self.df_edit.loc[:, self.target_col] = self.df_edit[self.target_col].apply(
-            lambda doc: list(set(w for w in doc if w not in current_stopwords)) if isinstance(doc, list) else []
-        )
+        self.df_edit.loc[:, self.target_col] = self.df_edit[self.target_col].apply(lambda doc: list(set(w for w in doc if w not in current_stopwords)) if isinstance(doc, list) else [])
         self._batches = self.df_edit[self.target_col].tolist()
 
     def _initialize_empty_graph_attributes(self, graph_exists_but_no_nodes=False):
-        """Helper to initialize graph attributes when the graph is empty or cannot be built."""
-        self.G = nx.Graph()
-        self.adjacencies = {}
-        self.betweeness = {}
-        self.clustering_coeff = {}
-        self.communities = []
-        self.communities_dict = {}
-        if not graph_exists_but_no_nodes and hasattr(self, 'node_df') and not self.node_df.empty :
-             # If node_df was supposed to be empty but isn't, this is an inconsistent state.
-             # However, if called because graph has no nodes but node_df might exist (e.g. all isolated),
-             # we might still want to assign empty community info.
-             # For now, if node_df exists, ensure 'community' column is present.
-             self.node_df['community'] = -1
-        # If node_df is truly empty, it's handled by the caller (build_graph)
+        self.G = nx.Graph(); self.adjacencies = {}; self.betweeness = {}; self.clustering_coeff = {}; self.communities = []; self.communities_dict = {}
+        if not graph_exists_but_no_nodes and hasattr(self, 'node_df') and not self.node_df.empty : self.node_df['community'] = -1
 
     def _calculate_graph_metrics(self):
-        """Calculates and assigns graph metrics (adjacency, betweenness, clustering) to node_df."""
-        if not hasattr(self, 'G') or not self.G.nodes():
-            print("Warning: Graph not available for metric calculation.")
-            return
-
-        self.adjacencies = dict(self.G.adjacency())
-        self.betweeness = nx.betweenness_centrality(self.G)
-        self.clustering_coeff = nx.clustering(self.G)
-
+        if not hasattr(self, 'G') or not self.G.nodes(): print("Warning: Graph not available for metric calculation."); return
+        self.adjacencies = dict(self.G.adjacency()); self.betweeness = nx.betweenness_centrality(self.G); self.clustering_coeff = nx.clustering(self.G)
         self.node_df['adjacency_frequency'] = self.node_df['id_code'].map(lambda x: len(self.adjacencies.get(x, {})))
         self.node_df['betweeness_centrality'] = self.node_df['id_code'].map(lambda x: self.betweeness.get(x, 0.0))
         self.node_df['clustering_coefficient'] = self.node_df['id_code'].map(lambda x: self.clustering_coeff.get(x, 0.0))
 
     def _detect_communities(self):
-        """Detects communities and assigns them to node_df."""
         if not hasattr(self, 'G') or not self.G.nodes() or self.node_df.empty:
-            print("Warning: Graph or node_df not available for community detection.")
-            self.communities = []
-            self.communities_dict = {}
-            if hasattr(self, 'node_df') and not self.node_df.empty:
-                 self.node_df['community'] = -1
-            return
-
-        # greedy_modularity_communities can return an empty list or list of frozensets
-        raw_communities = community.greedy_modularity_communities(self.G)
-        self.communities = [list(comm) for comm in raw_communities if comm] # Ensure list of lists, remove empty sets
-
+            print("Warning: Graph or node_df not available for community detection."); self.communities = []; self.communities_dict = {}
+            if hasattr(self, 'node_df') and not self.node_df.empty: self.node_df['community'] = -1; return
+        raw_communities = community.greedy_modularity_communities(self.G); self.communities = [list(comm) for comm in raw_communities if comm]
         self.communities_dict = {i: comm_nodes for i, comm_nodes in enumerate(self.communities)}
-
         def community_allocation(id_code):
             for k, v_list in self.communities_dict.items():
-                if id_code in v_list:
-                    return k
+                if id_code in v_list: return k
             return -1
         self.node_df['community'] = self.node_df['id_code'].map(community_allocation)
 
-
     def _create_network_trace(self, trace_type: str, **kwargs) -> go.Scatter:
-        """Helper to create a single trace for the network graph."""
-        if trace_type == "edge":
-            return go.Scatter(
-                x=kwargs['x'], y=kwargs['y'], mode='lines',
-                line={'width': kwargs['width'], 'color': kwargs['color']},
-                line_shape='spline', opacity=kwargs['opacity']
-            )
-        elif trace_type == "node":
-            return go.Scatter(
-                x=kwargs['x'], y=kwargs['y'], text=kwargs['text'],
-                mode='markers+text', textposition='bottom center',
-                hoverinfo="text", marker=kwargs['marker']
-            )
+        if trace_type == "edge": return go.Scatter(x=kwargs['x'], y=kwargs['y'], mode='lines', line={'width': kwargs['width'], 'color': kwargs['color']}, line_shape='spline', opacity=kwargs['opacity'])
+        elif trace_type == "node": return go.Scatter(x=kwargs['x'], y=kwargs['y'], text=kwargs['text'], mode='markers+text', textposition='bottom center', hoverinfo="text", marker=kwargs['marker'])
         raise ValueError(f"Unknown trace_type: {trace_type}")
 
-    def co_network(self, title:str = None, sizing:int=100, node_size_col:str='adjacency_frequency',
-                   color_palette:str='hls', layout_func=nx.kamada_kawai_layout, #renamed layout to layout_func
-                   light_theme:bool=True, width:int=1700, height:int=1200, save:bool=False) -> None:
-        """Plots of co-occurrence networks
-        # ... (docstringはそのまま)
-        """
-        if not hasattr(self, 'G') or not self.G.nodes():
-            print("Warning: Graph not built or empty. Cannot plot co-occurrence network.")
-            return
-        if not hasattr(self, 'node_df') or self.node_df.empty:
-            print("Warning: Node DataFrame not available or empty. Cannot plot co-occurrence network.")
-            return
+    def co_network(self, title:str = None, sizing:int=100, node_size_col:str='adjacency_frequency', color_palette:str='hls', layout_func=nx.kamada_kawai_layout, light_theme:bool=True, width:int=1700, height:int=1200, save:bool=False) -> None:
+        if not hasattr(self, 'G') or not self.G.nodes(): print("Warning: Graph not built or empty. Cannot plot co-occurrence network."); return
+        if not hasattr(self, 'node_df') or self.node_df.empty: print("Warning: Node DataFrame not available or empty. Cannot plot co-occurrence network."); return
         if node_size_col not in self.node_df.columns:
-            print(f"Warning: node_size column '{node_size_col}' not found in node_df. Using 'adjacency_frequency'.")
-            node_size_col = 'adjacency_frequency'
-            if node_size_col not in self.node_df.columns: # Still not there
-                 print(f"Warning: Default node_size column 'adjacency_frequency' also not found. Node sizes will be uniform.")
-                 # Create a dummy column for uniform size if necessary, or handle in marker size calculation
-                 self.node_df['uniform_size'] = 10 # Example uniform size value
-                 node_size_col = 'uniform_size'
-
-
-        back_col, edge_col = ('#ffffff', '#ece8e8') if light_theme else ('#000000', '#2d2b2b')
-
-        final_node_sizes = self._calculate_node_sizes(node_size_col, sizing)
-
+            print(f"Warning: node_size column '{node_size_col}' not found in node_df. Using 'adjacency_frequency'."); node_size_col = 'adjacency_frequency'
+            if node_size_col not in self.node_df.columns: print(f"Warning: Default node_size column 'adjacency_frequency' also not found. Node sizes will be uniform."); self.node_df['uniform_size'] = 10; node_size_col = 'uniform_size'
+        back_col, edge_col = ('#ffffff', '#ece8e8') if light_theme else ('#000000', '#2d2b2b'); final_node_sizes = self._calculate_node_sizes(node_size_col, sizing)
         pos = layout_func(self.G)
-        for node_id_code in self.G.nodes(): # G.nodes() are id_codes
-            self.G.nodes[node_id_code]['pos'] = list(pos[node_id_code])
-
-        edge_traces = []
-        for edge_nodes in self.G.edges(): # edge_nodes are (id_code_1, id_code_2)
-            x0, y0 = self.G.nodes[edge_nodes[0]]['pos']
-            x1, y1 = self.G.nodes[edge_nodes[1]]['pos']
-            edge_traces.append(self._create_network_trace(
-                trace_type="edge", x=[x0, x1, None], y=[y0, y1, None],
-                width=1.2, color=edge_col, opacity=1
-            ))
-
+        for node_id_code in self.G.nodes(): self.G.nodes[node_id_code]['pos'] = list(pos[node_id_code])
+        edge_traces = [self._create_network_trace(trace_type="edge", x=[self.G.nodes[edge_nodes[0]]['pos'][0], self.G.nodes[edge_nodes[1]]['pos'][0], None], y=[self.G.nodes[edge_nodes[0]]['pos'][1], self.G.nodes[edge_nodes[1]]['pos'][1], None], width=1.2, color=edge_col, opacity=1) for edge_nodes in self.G.edges()]
         node_x, node_y, node_hover_text, node_marker_colors, node_marker_sizes = [], [], [], [], []
-
-        # Ensure 'community' column exists and is numeric for coloring
-        if 'community' not in self.node_df.columns or not pd.api.types.is_numeric_dtype(self.node_df['community']):
-            self.node_df['community_display'] = 0 # Default community for coloring if missing/invalid
-        else:
-            self.node_df['community_display'] = self.node_df['community']
-
-        num_communities = self.node_df['community_display'].nunique()
-        palette_colors = get_colorpalette(color_palette, num_communities if num_communities > 0 else 1)
-
-
-        # node_df is indexed by default pd index, 'id_code' is a column.
-        # We need to map G.nodes (which are id_codes) to rows in node_df.
-        # A common way is to set 'id_code' as index for quick lookup if node_df is large,
-        # or iterate and filter if it's small.
-        # For simplicity, assuming node_df['id_code'] contains unique values corresponding to G.nodes()
-
-        # Pre-calculate mapping from id_code to its actual display name ('id') and community
+        if 'community' not in self.node_df.columns or not pd.api.types.is_numeric_dtype(self.node_df['community']): self.node_df['community_display'] = 0
+        else: self.node_df['community_display'] = self.node_df['community']
+        num_communities = self.node_df['community_display'].nunique(); palette_colors = get_colorpalette(color_palette, num_communities if num_communities > 0 else 1)
         id_code_to_info = self.node_df.set_index('id_code')
-
-        for id_code_node in self.G.nodes(): # id_code_node is an id_code from G
-            x, y = self.G.nodes[id_code_node]['pos']
-            node_x.append(x)
-            node_y.append(y)
-
-            node_specific_info = id_code_to_info.loc[id_code_node]
-            node_hover_text.append(node_specific_info['id']) # Original node name for hover/text
-
-            community_val = int(node_specific_info['community_display'])
-            node_marker_colors.append(palette_colors[community_val % len(palette_colors)])
-
-            # final_node_sizes should align with node_df's original index if it was used for scaling
-            # If final_node_sizes was created from node_df[node_size_col].values, it aligns with default 0..N-1 index
-            # We need the size for *this* specific id_code_node.
-            # Assuming final_node_sizes is a pd.Series with the same index as self.node_df before set_index:
-            node_marker_sizes.append(final_node_sizes.loc[node_specific_info.name]) # .name is the original index (if id_code was not index)
-                                                                                  # If id_code was already index, then final_node_sizes should also be indexed by id_code.
-                                                                                  # Let's assume final_node_sizes is a Series aligned with self.node_df's original index.
-                                                                                  # The node_specific_info.name will give that original index.
-
-        node_trace = self._create_network_trace(
-            trace_type="node", x=node_x, y=node_y, text=node_hover_text,
-            marker={'size': node_marker_sizes, 'line': dict(width=0.5, color=edge_col), 'color': node_marker_colors}
-        )
+        for id_code_node in self.G.nodes():
+            x, y = self.G.nodes[id_code_node]['pos']; node_x.append(x); node_y.append(y)
+            node_specific_info = id_code_to_info.loc[id_code_node]; node_hover_text.append(node_specific_info['id'])
+            community_val = int(node_specific_info['community_display']); node_marker_colors.append(palette_colors[community_val % len(palette_colors)])
+            node_marker_sizes.append(final_node_sizes.loc[node_specific_info.name])
+        node_trace = self._create_network_trace(trace_type="node", x=node_x, y=node_y, text=node_hover_text, marker={'size': node_marker_sizes, 'line': dict(width=0.5, color=edge_col), 'color': node_marker_colors})
         fig_data = edge_traces + [node_trace]
-        fig_layout = go.Layout(
-            title=str(title) if title else "Co-occurrence Network",
-            font=dict(family='Arial', size=12), width=width, height=height, autosize=True,
-            showlegend=False, xaxis=dict(showline=False, zeroline=False, showgrid=False, showticklabels=False, title=''),
-            yaxis=dict(showline=False, zeroline=False, showgrid=False, showticklabels=False, title=''),
-            margin=dict(l=40, r=40, b=85, t=100, pad=0), hovermode='closest', plot_bgcolor=back_col
-        )
-        fig = go.Figure(data=fig_data, layout=fig_layout)
-        iplot(fig)
-
-        if save:
-            self.save_plot(fig, title if title else "co_network")
-
-        gc.collect()
-        return None
+        fig_layout = go.Layout(title=str(title) if title else "Co-occurrence Network", font=dict(family='Arial', size=12), width=width, height=height, autosize=True, showlegend=False, xaxis=dict(showline=False, zeroline=False, showgrid=False, showticklabels=False, title=''), yaxis=dict(showline=False, zeroline=False, showgrid=False, showticklabels=False, title=''), margin=dict(l=40, r=40, b=85, t=100, pad=0), hovermode='closest', plot_bgcolor=back_col)
+        fig = go.Figure(data=fig_data, layout=fig_layout); iplot(fig)
+        if save: self.save_plot(fig, title if title else "co_network")
+        gc.collect(); return None
 
     def _calculate_node_sizes(self, node_size_col: str, sizing_factor: int) -> pd.Series:
-        """Helper to calculate scaled node sizes for plotting."""
         if node_size_col not in self.node_df.columns or self.node_df[node_size_col].isnull().all():
             print(f"Warning: Node size column '{node_size_col}' not found or all nulls. Using uniform small size.")
             return pd.Series([sizing_factor * 0.1] * len(self.node_df), index=self.node_df.index)
-
         node_sizes_numeric = pd.to_numeric(self.node_df[node_size_col], errors='coerce').fillna(0)
-
-        if len(node_sizes_numeric) == 0: # Should not happen if node_df is not empty
-            return pd.Series(index=self.node_df.index, dtype=float)
-
-        # Handle cases where all values are the same or all are zero to avoid scaler issues
-        if node_sizes_numeric.nunique() <= 1: # Includes all same, or all zero
-            if node_sizes_numeric.iloc[0] == 0 : # All zeros
-                 return pd.Series([sizing_factor * 0.1] * len(self.node_df), index=self.node_df.index)
-            else: # All same non-zero value
-                 return pd.Series([sizing_factor * 0.5] * len(self.node_df), index=self.node_df.index)
-
-        min_max_scaler = preprocessing.MinMaxScaler(feature_range=(0.1, 1.0)) # Avoid zero size
+        if len(node_sizes_numeric) == 0: return pd.Series(index=self.node_df.index, dtype=float)
+        if node_sizes_numeric.nunique() <= 1:
+            if node_sizes_numeric.iloc[0] == 0 : return pd.Series([sizing_factor * 0.1] * len(self.node_df), index=self.node_df.index)
+            else: return pd.Series([sizing_factor * 0.5] * len(self.node_df), index=self.node_df.index)
+        min_max_scaler = preprocessing.MinMaxScaler(feature_range=(0.1, 1.0))
         scaled_values = min_max_scaler.fit_transform(node_sizes_numeric.values.reshape(-1, 1)).flatten()
-        final_sizes = pd.Series(scaled_values, index=self.node_df.index) * sizing_factor
-        return final_sizes
+        return pd.Series(scaled_values, index=self.node_df.index) * sizing_factor
 
-    def sunburst(self, title:str=None, colorscale:bool=False, color_col:str='betweeness_centrality',
-                 color_continuous_scale:str='Oryel', width:int=1100, height:int=1100, save:bool=False) -> plotly.graph_objs.Figure:
-        """Plots of sunburst chart
-        # ... (docstringはそのまま)
-        """
-        if not hasattr(self, 'node_df') or self.node_df.empty:
-            print("Warning: Node DataFrame not available or empty. Cannot plot sunburst chart.")
-            return go.Figure() # Return empty figure
-
+    def sunburst(self, title:str=None, colorscale:bool=False, color_col:str='betweeness_centrality', color_continuous_scale:str='Oryel', width:int=1100, height:int=1100, save:bool=False) -> plotly.graph_objs.Figure:
+        if not hasattr(self, 'node_df') or self.node_df.empty: print("Warning: Node DataFrame not available or empty. Cannot plot sunburst chart."); return go.Figure()
         _df = self.node_df.copy()
-
-        if 'community' not in _df.columns:
-            _df['community'] = '0' # Default community if missing
-        else:
-            _df['community'] = _df['community'].astype(str)
-
-        if 'id' not in _df.columns: # Should always exist
-             _df['id'] = "Unknown"
-
-        # Ensure values for path and values are not empty and valid
+        if 'community' not in _df.columns: _df['community'] = '0'
+        else: _df['community'] = _df['community'].astype(str)
+        if 'id' not in _df.columns: _df['id'] = "Unknown"
         if 'adjacency_frequency' not in _df.columns or _df['adjacency_frequency'].isnull().all():
-            print("Warning: 'adjacency_frequency' column is missing or all nulls. Sunburst may be empty or error.")
-            _df['adjacency_frequency'] = 1 # Dummy value to prevent error if missing/all null
-
+            print("Warning: 'adjacency_frequency' column is missing or all nulls. Sunburst may be empty or error."); _df['adjacency_frequency'] = 1
         path_cols = ['community', 'id']
-
         try:
             if colorscale:
                 if color_col not in _df.columns or _df[color_col].isnull().all():
-                    print(f"Warning: color_col '{color_col}' for sunburst is missing or all nulls. Using default coloring.")
-                    fig = px.sunburst(_df, path=path_cols, values='adjacency_frequency', color='community')
+                    print(f"Warning: color_col '{color_col}' for sunburst is missing or all nulls. Using default coloring."); fig = px.sunburst(_df, path=path_cols, values='adjacency_frequency', color='community')
                 else:
-                    # Ensure color_col is numeric for continuous scale
                     _df[color_col] = pd.to_numeric(_df[color_col], errors='coerce').fillna(0)
-                    fig = px.sunburst(_df, path=path_cols, values='adjacency_frequency',
-                                      color=color_col, hover_data=None, # Consider adding some hover_data
-                                      color_continuous_scale=color_continuous_scale,
-                                      color_continuous_midpoint=np.average(
-                                          _df[color_col].fillna(0), weights=_df['adjacency_frequency'].fillna(1) # Handle potential NaNs
-                                      ))
-            else:
-                fig = px.sunburst(_df, path=path_cols, values='adjacency_frequency', color='community')
-        except Exception as e:
-            print(f"Error creating sunburst chart: {e}. Returning empty figure.")
-            return go.Figure()
+                    fig = px.sunburst(_df, path=path_cols, values='adjacency_frequency', color=color_col, hover_data=None, color_continuous_scale=color_continuous_scale, color_continuous_midpoint=np.average(_df[color_col].fillna(0), weights=_df['adjacency_frequency'].fillna(1)))
+            else: fig = px.sunburst(_df, path=path_cols, values='adjacency_frequency', color='community')
+        except Exception as e: print(f"Error creating sunburst chart: {e}. Returning empty figure."); return go.Figure()
+        fig.update_layout(title=str(title) if title else 'Sunburst Chart', width=width, height=height)
+        if save: self.save_plot(fig, title if title else "sunburst_chart")
+        del _df; gc.collect(); return fig
 
-
-        fig.update_layout(
-            title=str(title) if title else 'Sunburst Chart',
-            width=width,
-            height=height,
-        )
-
-        if save:
-            self.save_plot(fig, title if title else "sunburst_chart")
-
-        del _df
-        gc.collect()
-        return fig
-
-    def save_plot(self, fig, title_prefix: str) -> None: # Renamed title to title_prefix
-        """Save the HTML file
-        Args:
-            fig (plotly.graph_objs.Figure): The Plotly figure object to save.
-            title_prefix (str): A prefix for the filename. The final filename will be
-                                `YYYY-MM-DD_title_prefix.html`. Special characters in
-                                `title_prefix` will be replaced with underscores.
-        Returns:
-            None
-
-        Notes:
-            If `output_file_path` (set during `NLPlot` initialization) is not writable,
-            a `PermissionError` will be caught, and an error message printed.
-        """
-        if not title_prefix or not isinstance(title_prefix, str):
-            title_prefix = "plot"
+    def save_plot(self, fig, title_prefix: str) -> None:
+        if not title_prefix or not isinstance(title_prefix, str): title_prefix = "plot"
         title_prefix = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in title_prefix)
-
         date_str = pd.to_datetime(datetime.datetime.now()).strftime('%Y-%m-%d')
         filename = f"{date_str}_{title_prefix}.html"
         full_path = os.path.join(self.output_file_path, filename)
-        try:
-            os.makedirs(self.output_file_path, exist_ok=True)
-            plotly.offline.plot(fig, filename=full_path, auto_open=False)
-            print(f"Plot saved to {full_path}")
-            except PermissionError:
-            print(f"Error: Permission denied to write plot to '{full_path}'. Please check directory permissions.")
-        except Exception as e:
-            print(f"Error saving plot to '{full_path}': {e}")
+        try: os.makedirs(self.output_file_path, exist_ok=True); plotly.offline.plot(fig, filename=full_path, auto_open=False); print(f"Plot saved to {full_path}")
+        except PermissionError: print(f"Error: Permission denied to write plot to '{full_path}'. Please check directory permissions.")
+        except Exception as e: print(f"Error saving plot to '{full_path}': {e}")
         return None
 
     def save_tables(self, prefix: str = "nlplot_output") -> None:
-        """
-        Saves the generated node and edge DataFrames to CSV files.
-
-        The DataFrames `self.node_df` and `self.edge_df` (typically generated by
-        `build_graph`) are saved.
-
-        Args:
-            prefix (str, optional): A prefix for the filenames. Files will be named
-                                    `YYYY-MM-DD_prefix_node_df.csv` and
-                                    `YYYY-MM-DD_prefix_edge_df.csv`.
-                                    Defaults to "nlplot_output".
-        Returns:
-            None
-
-        Notes:
-            If `output_file_path` (set during `NLPlot` initialization) is not writable,
-            a `PermissionError` will be caught, and an error message printed.
-            If `node_df` or `edge_df` are not available or empty, they will not be saved,
-            and a message will be printed.
-        """
-        if not hasattr(self, 'node_df') or not hasattr(self, 'edge_df'): # Check if attributes exist
-            print("Warning: node_df or edge_df attributes not found. Ensure build_graph() has been called. Cannot save tables.")
-            return
-
+        if not hasattr(self, 'node_df') or not hasattr(self, 'edge_df'): print("Warning: node_df or edge_df attributes not found. Ensure build_graph() has been called. Cannot save tables."); return
         date_str = pd.to_datetime(datetime.datetime.now()).strftime('%Y-%m-%d')
         sanitized_prefix = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in prefix)
-
         try:
             os.makedirs(self.output_file_path, exist_ok=True)
-
             if hasattr(self, 'node_df') and isinstance(self.node_df, pd.DataFrame) and not self.node_df.empty:
                 node_filename = os.path.join(self.output_file_path, f"{date_str}_{sanitized_prefix}_node_df.csv")
-                self.node_df.to_csv(node_filename, index=False)
-                print(f'Saved nodes to {node_filename}')
-            else:
-                print('Node DataFrame is empty or not available. Not saved.')
-
+                self.node_df.to_csv(node_filename, index=False); print(f'Saved nodes to {node_filename}')
+            else: print('Node DataFrame is empty or not available. Not saved.')
             if hasattr(self, 'edge_df') and isinstance(self.edge_df, pd.DataFrame) and not self.edge_df.empty:
                 edge_filename = os.path.join(self.output_file_path, f"{date_str}_{sanitized_prefix}_edge_df.csv")
-                self.edge_df.to_csv(edge_filename, index=False)
-                print(f'Saved edges to {edge_filename}')
-            else:
-                print('Edge DataFrame is empty or not available. Not saved.')
-
-        except PermissionError:
-            print(f"Error: Permission denied to write tables in '{self.output_file_path}'. Please check directory permissions.")
-        except Exception as e:
-            print(f"Error saving tables: {e}")
+                self.edge_df.to_csv(edge_filename, index=False); print(f'Saved edges to {edge_filename}')
+            else: print('Edge DataFrame is empty or not available. Not saved.')
+        except PermissionError: print(f"Error: Permission denied to write tables in '{self.output_file_path}'. Please check directory permissions.")
+        except Exception as e: print(f"Error saving tables: {e}")
         return None
+
+    # --- LLM Related Methods ---
+    def _get_llm_client(self, llm_provider: str, model_name: str, **kwargs) -> BaseChatModel:
+        if not LANGCHAIN_AVAILABLE: raise ImportError("Langchain or related packages are not installed. Please install them to use LLM features (e.g., pip install langchain langchain-openai langchain-community openai).")
+        provider = llm_provider.lower()
+        if provider == "openai":
+            api_key = kwargs.pop("openai_api_key", os.getenv("OPENAI_API_KEY"))
+            if not api_key: raise ValueError("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable or pass 'openai_api_key' as a keyword argument.")
+            try: return ChatOpenAI(model=model_name, openai_api_key=api_key, **kwargs)
+            except Exception as e: raise ValueError(f"Failed to initialize OpenAI client for model '{model_name}': {e}")
+        elif provider == "ollama":
+            base_url = kwargs.pop("base_url", "http://localhost:11434")
+            ollama_kwargs = {k: v for k, v in kwargs.items() if k != 'openai_api_key'}
+            try: return OllamaChat(model=model_name, base_url=base_url, **ollama_kwargs)
+            except Exception as e: raise ValueError(f"Failed to initialize Ollama client for model '{model_name}' with base_url '{base_url}': {e}")
+        else: raise ValueError(f"Unsupported LLM provider: '{llm_provider}'. Supported providers are 'openai', 'ollama'.")
+
+    def analyze_sentiment_llm(
+        self,
+        text_series: pd.Series,
+        llm_provider: str,
+        model_name: str,
+        prompt_template_str: Optional[str] = None,
+        temperature: float = 0.0,
+        **llm_config
+    ) -> pd.DataFrame:
+        if not LANGCHAIN_AVAILABLE:
+            print("Warning: Langchain or its dependencies are not installed. LLM-based sentiment analysis is not available.")
+            return pd.DataFrame(columns=["text", "sentiment", "raw_llm_output"])
+        if not isinstance(text_series, pd.Series):
+            print("Warning: Input 'text_series' must be a pandas Series. Returning empty DataFrame with expected columns.")
+            return pd.DataFrame(columns=["text", "sentiment", "raw_llm_output"])
+        if text_series.empty: return pd.DataFrame(columns=["text", "sentiment", "raw_llm_output"])
+        try:
+            llm_client_config = llm_config.copy()
+            if 'temperature' not in llm_client_config: llm_client_config['temperature'] = temperature
+            llm = self._get_llm_client(llm_provider, model_name, **llm_client_config)
+        except (ImportError, ValueError) as e:
+            print(f"Error initializing LLM client: {e}")
+            return pd.DataFrame([{'text': str(txt) if pd.notna(txt) else "", 'sentiment': 'error', 'raw_llm_output': str(e)} for txt in text_series], columns=["text", "sentiment", "raw_llm_output"])
+        if prompt_template_str is None: prompt_template_str = "Analyze the sentiment of the following text and classify it as 'positive', 'negative', or 'neutral'. Return only the single word classification for the sentiment. Text: {text}"
+        try: prompt = PromptTemplate.from_template(prompt_template_str)
+        except Exception as e: print(f"Error creating prompt template from string \"{prompt_template_str}\": {e}. Using a basic pass-through."); prompt = PromptTemplate.from_template("Text: {text}\nSentiment:")
+        results = []
+        for text_input in text_series:
+            original_text_for_df = str(text_input) if pd.notna(text_input) else ""; sentiment = "unknown"; raw_output = ""
+            if not original_text_for_df.strip(): sentiment = "neutral"; raw_output = "Input text was empty or whitespace."
+            else:
+                try:
+                    formatted_prompt_content = prompt.format_prompt(text=original_text_for_df).to_string()
+                    response_message = llm.invoke(formatted_prompt_content)
+                    raw_output = response_message.content if hasattr(response_message, 'content') else str(response_message)
+                    processed_output = raw_output.strip().lower()
+                    if "positive" in processed_output: sentiment = "positive"
+                    elif "negative" in processed_output: sentiment = "negative"
+                    elif "neutral" in processed_output: sentiment = "neutral"
+                except Exception as e: print(f"Error analyzing sentiment for text '{original_text_for_df[:50]}...': {e}"); sentiment = "error"; raw_output = str(e)
+            results.append({"text": original_text_for_df, "sentiment": sentiment, "raw_llm_output": raw_output})
+        return pd.DataFrame(results, columns=["text", "sentiment", "raw_llm_output"])
+
+    def categorize_text_llm(
+        self,
+        text_series: pd.Series,
+        categories: List[str],
+        llm_provider: str,
+        model_name: str,
+        prompt_template_str: Optional[str] = None,
+        multi_label: bool = False,
+        temperature: float = 0.0,
+        **llm_config
+    ) -> pd.DataFrame:
+        """
+        (TDD Cycle 3 - Implementation)
+        Categorizes texts using a specified LLM via Langchain.
+        """
+        category_col_name = "categories" if multi_label else "category"
+        default_columns = ["text", category_col_name, "raw_llm_output"]
+        if not LANGCHAIN_AVAILABLE: print("Warning: Langchain or its dependencies are not installed. LLM-based categorization is not available."); return pd.DataFrame(columns=default_columns)
+        if not isinstance(text_series, pd.Series): print("Warning: Input 'text_series' must be a pandas Series."); return pd.DataFrame(columns=default_columns)
+        if text_series.empty: return pd.DataFrame(columns=default_columns)
+        if not categories or not isinstance(categories, list) or not all(isinstance(c, str) for c in categories): raise ValueError("Categories list must be a non-empty list of strings.")
+        try:
+            llm_client_config = llm_config.copy();
+            if 'temperature' not in llm_client_config: llm_client_config['temperature'] = temperature
+            llm = self._get_llm_client(llm_provider, model_name, **llm_client_config)
+        except (ImportError, ValueError) as e:
+            print(f"Error initializing LLM client: {e}")
+            return pd.DataFrame([{'text': str(txt) if pd.notna(txt) else "", category_col_name: [] if multi_label else 'error', 'raw_llm_output': str(e)} for txt in text_series], columns=default_columns)
+        category_list_str = ", ".join(f"'{c}'" for c in categories)
+        if prompt_template_str is None:
+            if multi_label: prompt_template_str = (f"Analyze the following text and classify it into one or more of these categories: {category_list_str}. Return a comma-separated list of the matching category names. If no categories match, return 'none'. Text: {{text}}")
+            else: prompt_template_str = (f"Analyze the following text and classify it into exactly one of these categories: {category_list_str}. Return only the single matching category name. If no categories match, return 'unknown'. Text: {{text}}")
+        try:
+            if "{categories}" in prompt_template_str: prompt = PromptTemplate(template=prompt_template_str, input_variables=["text", "categories"])
+            else: prompt = PromptTemplate.from_template(prompt_template_str)
+        except Exception as e:
+            print(f"Error creating prompt template: {e}.")
+            return pd.DataFrame([{'text': str(txt) if pd.notna(txt) else "", category_col_name: [] if multi_label else 'error', 'raw_llm_output': f"Prompt template error: {e}"} for txt in text_series], columns=default_columns)
+        results = []
+        for text_input in text_series:
+            original_text_for_df = str(text_input) if pd.notna(text_input) else ""; raw_llm_resp_content = ""
+            if not original_text_for_df.strip(): parsed_categories = [] if multi_label else "unknown"; raw_llm_resp_content = "Input text was empty or whitespace."
+            else:
+                try:
+                    prompt_args = {"text": original_text_for_df}
+                    if "{categories}" in prompt.template: prompt_args["categories"] = category_list_str
+                    formatted_prompt_content = prompt.format_prompt(**prompt_args).to_string()
+                    response_message = llm.invoke(formatted_prompt_content)
+                    raw_llm_resp_content = response_message.content if hasattr(response_message, 'content') else str(response_message)
+                    processed_output = raw_llm_resp_content.strip().lower()
+                    if multi_label:
+                        found_cats_raw = [cat.strip() for cat in processed_output.split(',')]; parsed_categories = [original_cat for original_cat in categories if original_cat.lower() in [fcr.lower() for fcr in found_cats_raw]]
+                    else:
+                        parsed_categories = "unknown"
+                        for cat_original_case in categories:
+                            if cat_original_case.lower() == processed_output: parsed_categories = cat_original_case; break
+                        if parsed_categories == "unknown":
+                             for cat_original_case in categories:
+                                 if cat_original_case.lower() in processed_output: parsed_categories = cat_original_case; break
+                except Exception as e: print(f"Error categorizing text '{original_text_for_df[:50]}...': {e}"); parsed_categories = [] if multi_label else "error"; raw_llm_resp_content = str(e)
+            results.append({"text": original_text_for_df, category_col_name: parsed_categories, "raw_llm_output": raw_llm_resp_content})
+        return pd.DataFrame(results, columns=default_columns)
+
+    def _chunk_text(
+        self,
+        text_to_chunk: str,
+        strategy: str = "recursive_char",
+        chunk_size: int = 1000,
+        chunk_overlap: int = 100,
+        **splitter_kwargs
+    ) -> List[str]:
+        """
+        (TDD Cycle 4 - Initial Stub)
+        Splits a long text into smaller chunks using Langchain TextSplitters.
+        """
+        if not LANGCHAIN_AVAILABLE:
+            print("Warning: Langchain or its text splitter components are not installed. Chunking will not be performed; returning original text as a single chunk.")
+            return [text_to_chunk] if text_to_chunk else []
+
+        # print("_chunk_text (stub) called.")
+        if not text_to_chunk: return [] # If input is empty, return empty list of chunks
+
+        # Actual implementation will go here in Green phase for chunking
+        # For now, the stub returns the original text as a single chunk if not empty.
+        # This will make tests for actual chunking fail as expected (Red state for functionality).
+        return [text_to_chunk]
+
 
     def plot_japanese_text_features(
         self,
@@ -1175,28 +599,19 @@ class NLPlot():
         if target_feature not in features_df.columns:
             raise ValueError(f"Target feature '{target_feature}' not found in DataFrame.")
 
-        # Attempt to convert target_feature to numeric, handling potential errors
         try:
             numeric_feature_series = pd.to_numeric(features_df[target_feature], errors='coerce')
-        except Exception as e: # Catch errors during conversion itself if not just 'coerce'
+        except Exception as e:
             raise ValueError(f"Column '{target_feature}' could not be converted to numeric due to: {e}")
 
         if not pd.api.types.is_numeric_dtype(numeric_feature_series) or numeric_feature_series.isnull().all():
-             # This condition means either it wasn't numeric to begin with and coerce made it all NaN,
-             # or it was already all NaN.
             raise ValueError(f"Column '{target_feature}' is not numeric, contains only NaN values, or could not be coerced to numeric for plotting.")
 
         plot_title = title if title else f"Distribution of {target_feature}"
 
-        hist_kwargs = {
-            "x": target_feature,
-            "title": plot_title,
-            "marginal": "box",
-        }
-
+        hist_kwargs = { "x": target_feature, "title": plot_title, "marginal": "box" }
         df_to_plot = features_df.copy()
         df_to_plot[target_feature] = numeric_feature_series
-
         hist_kwargs.update(kwargs)
 
         try:
@@ -1212,83 +627,4 @@ class NLPlot():
 
         return fig
 
-    def plot_japanese_text_features(
-        self,
-        features_df: pd.DataFrame,
-        target_feature: str,
-        title: Optional[str] = None,
-        save: bool = False,
-        **kwargs
-    ) -> Optional[plotly.graph_objs.Figure]:
-        """
-        Plots a histogram of a specified feature from the Japanese text features DataFrame.
-
-        Args:
-            features_df (pd.DataFrame): DataFrame containing Japanese text features,
-                                        typically an output from `get_japanese_text_features`.
-            target_feature (str): The name of the column in `features_df` to plot.
-                                  This column should contain numeric data.
-            title (Optional[str], optional): Title of the plot. If None, a default title
-                                             based on `target_feature` is used. Defaults to None.
-            save (bool, optional): Whether to save the generated plot as an HTML file.
-                                   Defaults to False.
-            **kwargs: Additional keyword arguments to be passed to `plotly.express.histogram`.
-                      (e.g., nbins, color, template, width, height).
-
-        Returns:
-            Optional[plotly.graph_objs.Figure]: The generated Plotly Figure object, or None if plotting fails.
-
-        Raises:
-            ValueError: If `features_df` is empty or not a DataFrame,
-                        or `target_feature` is not found in `features_df`,
-                        or if the `target_feature` column cannot be treated as numeric
-                        or contains only NaN values after conversion.
-        """
-        if not isinstance(features_df, pd.DataFrame) or features_df.empty:
-            raise ValueError("Input DataFrame 'features_df' is empty or not a DataFrame.")
-
-        if target_feature not in features_df.columns:
-            raise ValueError(f"Target feature '{target_feature}' not found in DataFrame.")
-
-        # Attempt to convert target_feature to numeric, handling potential errors
-        try:
-            numeric_feature_series = pd.to_numeric(features_df[target_feature], errors='coerce')
-        except Exception as e: # Catch errors during conversion itself if not just 'coerce'
-            raise ValueError(f"Column '{target_feature}' could not be converted to numeric due to: {e}")
-
-        if not pd.api.types.is_numeric_dtype(numeric_feature_series) or numeric_feature_series.isnull().all():
-             # This condition means either it wasn't numeric to begin with and coerce made it all NaN,
-             # or it was already all NaN.
-            raise ValueError(f"Column '{target_feature}' is not numeric, contains only NaN values, or could not be coerced to numeric for plotting.")
-
-        plot_title = title if title else f"Distribution of {target_feature}"
-
-        hist_kwargs = {
-            "x": target_feature, # Plotly express will use the original column from features_df
-            "title": plot_title,
-            "marginal": "box",
-        }
-        # Ensure features_df passed to px.histogram has the numeric version if conversion happened
-        # However, px.histogram can often handle numeric-like strings if `x` refers to a column name.
-        # For safety, one might pass the coerced series if it's different, but px usually handles this.
-        # Let's assume px.histogram uses the DataFrame and column name.
-
-        # We need to pass a DataFrame to px.histogram. If only the target_feature was modified (coerced),
-        # it's better to use a copy of features_df with the coerced series.
-        df_to_plot = features_df.copy()
-        df_to_plot[target_feature] = numeric_feature_series # Use the coerced (numeric) series for plotting
-
-        hist_kwargs.update(kwargs)
-
-        try:
-            fig = px.histogram(df_to_plot, **hist_kwargs) # Use df_to_plot
-            fig.update_layout(xaxis_title=target_feature, yaxis_title="Frequency")
-        except Exception as e:
-            print(f"Error during histogram generation for feature '{target_feature}': {e}")
-            return None
-
-        if save:
-            filename_prefix = f"jp_feature_{target_feature.replace(' ','_').replace('/','_')}" # Sanitize a bit more
-            self.save_plot(fig, filename_prefix)
-
-        return fig
+[end of nlplot/nlplot.py]
