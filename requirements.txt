@@ -9,3 +9,4 @@ pillow
 networkx
 ipython
 scikit-learn
+janome

@@ -25,6 +25,19 @@ from networkx.algorithms import community
 # Default path for Japanese Font, can be overridden
 DEFAULT_FONT_PATH = str(os.path.dirname(__file__)) + '/data/mplus-1c-regular.ttf'
 
+try:
+    from janome.tokenizer import Tokenizer as JanomeTokenizer
+    # from janome.tokenizer import Token as JanomeToken # For type hinting if needed later
+    JANOME_AVAILABLE = True
+except ImportError:
+    JANOME_AVAILABLE = False
+    # Define dummy classes or None if Janome is not available,
+    # so type hints or isinstance checks don't break if Janome isn't installed.
+    class JanomeTokenizer: # type: ignore
+        def tokenize(self, text: str, stream=False, wakati=False): # type: ignore
+            return [] # Return empty list if called
+    # class JanomeToken: pass
+
 
 def _ranked_topics_for_edges(batch_list: list) -> list:
     """Sorts a list of topics (words). Helper for edge generation."""
@@ -149,7 +162,7 @@ class NLPlot():
         if font_path and not os.path.exists(font_path): # User specified a font, but it wasn't found
             print(f"Warning: Specified font_path '{font_path}' not found. Falling back to default: {self.font_path}")
 
-        if not os.path.exists(self.font_path): # Check if the determined font_path (either custom or default) exists
+        if not os.path.exists(self.font_path):
             print(f"Warning: The determined font path '{self.font_path}' does not exist. WordCloud may fail if a valid font is not provided at runtime or if the default font is missing.")
 
         self.default_stopwords = []
@@ -166,6 +179,143 @@ class NLPlot():
             except Exception as e:
                 print(f"Warning: An unexpected error occurred while reading stopwords file '{default_stopwords_file_path}': {e}. Continuing without these default stopwords.")
                 self.default_stopwords = []
+
+        # Initialize Janome Tokenizer
+        self._janome_tokenizer = None
+        if JANOME_AVAILABLE:
+            try:
+                # You might want to specify a user dictionary path or other options here if needed.
+                # For now, use default tokenizer.
+                self._janome_tokenizer = JanomeTokenizer()
+            except Exception as e:
+                print(f"Warning: Failed to initialize Janome Tokenizer. Japanese text features may not be available. Error: {e}")
+                # self._janome_tokenizer remains None
+        # If JANOME_AVAILABLE is False, self._janome_tokenizer also remains None.
+
+    def _tokenize_japanese_text(self, text: str) -> list: # list[JanomeToken]
+        """
+        Tokenizes Japanese text using Janome.
+        Returns a list of Janome Token objects.
+        If Janome is not available or fails, returns an empty list and prints a warning.
+        """
+        if not JANOME_AVAILABLE:
+            print("Warning: Janome is not installed. Japanese tokenization is not available. Please install Janome (e.g., pip install janome).")
+            return []
+        if self._janome_tokenizer is None:
+            print("Warning: Janome Tokenizer is not available (it may have failed to initialize). Japanese tokenization cannot be performed.")
+            return []
+        if not isinstance(text, str) or not text.strip(): # Also check for empty or whitespace-only strings
+            return []
+
+        try:
+            # Janome's tokenizer returns a generator, so convert to list.
+            tokens = list(self._janome_tokenizer.tokenize(text))
+            return tokens
+        except Exception as e:
+            print(f"Error during Janome tokenization for text '{text[:30]}...': {e}")
+            return []
+
+    def get_japanese_text_features(self, japanese_text_series: pd.Series) -> pd.DataFrame:
+        """
+        Calculates various features for a series of Japanese texts using Janome morphological analyzer.
+
+        Args:
+            japanese_text_series (pd.Series): A pandas Series containing Japanese text strings.
+
+        Returns:
+            pd.DataFrame: A DataFrame where each row corresponds to an input text and columns
+                          represent calculated features:
+                          - 'text': The original input text.
+                          - 'total_tokens': Total number of tokens (including punctuation).
+                          - 'avg_token_length': Average length of tokens (excluding punctuation,
+                                              calculated as total characters of non-punctuation tokens
+                                              divided by the count of non-punctuation tokens).
+                                              Returns 0.0 if no non-punctuation tokens.
+                          - 'noun_ratio': Ratio of noun tokens to total tokens. Returns 0.0 if no tokens.
+                          - 'verb_ratio': Ratio of verb tokens (independent verbs) to total tokens. Returns 0.0 if no tokens.
+                          - 'adj_ratio': Ratio of adjective tokens (independent adjectives) to total tokens. Returns 0.0 if no tokens.
+                          - 'punctuation_count': Count of punctuation marks (句点「。」, 読点「、」).
+
+        Notes:
+            - Requires Janome to be installed and available. If Janome is not available or if the
+              tokenizer failed to initialize, this method will print a warning (via
+              `_tokenize_japanese_text`) and typically return features with values of 0 or 0.0.
+            - 品詞の分類 (名詞、動詞、形容詞) はJanomeの品詞体系に基づきます。
+              動詞は自立語 ('動詞,自立') のみ、形容詞は自立語 ('形容詞,自立') のみをカウント対象とします。
+            - Non-string entries in the input Series will result in features with values of 0 or 0.0.
+        """
+        # Check for Janome availability globally for the method if needed, though _tokenize_japanese_text handles it.
+        # if not JANOME_AVAILABLE or self._janome_tokenizer is None:
+        #     # This case is largely handled by _tokenize_japanese_text returning [] and subsequent logic.
+        #     # However, if the series itself is empty, handle that first.
+        #     # print("Warning: Janome not available/initialized. Cannot calculate Japanese text features accurately.")
+        #     # Fallback to returning an empty or NaN-filled DataFrame matching expected structure.
+        #     # This is complex if japanese_text_series is not empty.
+        #     # The current design relies on _tokenize_japanese_text handling Janome's absence per call.
+        #     pass
+
+        results = []
+        expected_columns = ['text', 'total_tokens', 'avg_token_length',
+                            'noun_ratio', 'verb_ratio', 'adj_ratio', 'punctuation_count']
+
+        if not isinstance(japanese_text_series, pd.Series):
+            print("Warning: Input must be a pandas Series. Returning empty DataFrame.")
+            return pd.DataFrame(columns=expected_columns)
+
+        if japanese_text_series.empty:
+            return pd.DataFrame(columns=expected_columns)
+
+        for text_input in japanese_text_series:
+            original_text = str(text_input) if pd.notna(text_input) else "" # Store original text, convert NaNs to empty string
+
+            if pd.isna(text_input) or not isinstance(text_input, str):
+                tokens = []
+            else:
+                tokens = self._tokenize_japanese_text(text_input)
+
+            total_tokens = len(tokens)
+
+            if total_tokens == 0:
+                results.append({
+                    'text': original_text, 'total_tokens': 0, 'avg_token_length': 0.0,
+                    'noun_ratio': 0.0, 'verb_ratio': 0.0, 'adj_ratio': 0.0, 'punctuation_count': 0
+                })
+                continue
+
+            # Filter out punctuation for average token length calculation and specific counts
+            non_punctuation_tokens = [
+                t for t in tokens if not (
+                    t.part_of_speech.startswith('記号,句点') or
+                    t.part_of_speech.startswith('記号,読点')
+                    # Consider other symbols if necessary: or t.part_of_speech.startswith('記号')
+                )
+            ]
+
+            num_non_punctuation_tokens = len(non_punctuation_tokens)
+            if num_non_punctuation_tokens > 0:
+                sum_token_lengths = sum(len(t.surface) for t in non_punctuation_tokens)
+                avg_token_length = sum_token_lengths / num_non_punctuation_tokens
+            else:
+                avg_token_length = 0.0
+
+            nouns = [t for t in tokens if t.part_of_speech.startswith('名詞')]
+            verbs = [t for t in tokens if t.part_of_speech.startswith('動詞,自立')]
+            adjectives = [t for t in tokens if t.part_of_speech.startswith('形容詞,自立')]
+
+            punctuations_list = [t for t in tokens if t.part_of_speech.startswith('記号,句点') or \
+                                                     t.part_of_speech.startswith('記号,読点')]
+
+            results.append({
+                'text': original_text,
+                'total_tokens': total_tokens,
+                'avg_token_length': avg_token_length,
+                'noun_ratio': len(nouns) / total_tokens if total_tokens > 0 else 0.0,
+                'verb_ratio': len(verbs) / total_tokens if total_tokens > 0 else 0.0,
+                'adj_ratio': len(adjectives) / total_tokens if total_tokens > 0 else 0.0,
+                'punctuation_count': len(punctuations_list)
+            })
+
+        return pd.DataFrame(results, columns=expected_columns)
 
     def get_stopword(self, top_n: int = 10, min_freq: int = 5) -> list:
         """Calculate the stop word.
@@ -986,3 +1136,159 @@ class NLPlot():
         except Exception as e:
             print(f"Error saving tables: {e}")
         return None
+
+    def plot_japanese_text_features(
+        self,
+        features_df: pd.DataFrame,
+        target_feature: str,
+        title: Optional[str] = None,
+        save: bool = False,
+        **kwargs
+    ) -> Optional[plotly.graph_objs.Figure]:
+        """
+        Plots a histogram of a specified feature from the Japanese text features DataFrame.
+
+        Args:
+            features_df (pd.DataFrame): DataFrame containing Japanese text features,
+                                        typically an output from `get_japanese_text_features`.
+            target_feature (str): The name of the column in `features_df` to plot.
+                                  This column should contain numeric data.
+            title (Optional[str], optional): Title of the plot. If None, a default title
+                                             based on `target_feature` is used. Defaults to None.
+            save (bool, optional): Whether to save the generated plot as an HTML file.
+                                   Defaults to False.
+            **kwargs: Additional keyword arguments to be passed to `plotly.express.histogram`.
+                      (e.g., nbins, color, template, width, height).
+
+        Returns:
+            Optional[plotly.graph_objs.Figure]: The generated Plotly Figure object, or None if plotting fails.
+
+        Raises:
+            ValueError: If `features_df` is empty or not a DataFrame,
+                        or `target_feature` is not found in `features_df`,
+                        or if the `target_feature` column cannot be treated as numeric
+                        or contains only NaN values after conversion.
+        """
+        if not isinstance(features_df, pd.DataFrame) or features_df.empty:
+            raise ValueError("Input DataFrame 'features_df' is empty or not a DataFrame.")
+
+        if target_feature not in features_df.columns:
+            raise ValueError(f"Target feature '{target_feature}' not found in DataFrame.")
+
+        # Attempt to convert target_feature to numeric, handling potential errors
+        try:
+            numeric_feature_series = pd.to_numeric(features_df[target_feature], errors='coerce')
+        except Exception as e: # Catch errors during conversion itself if not just 'coerce'
+            raise ValueError(f"Column '{target_feature}' could not be converted to numeric due to: {e}")
+
+        if not pd.api.types.is_numeric_dtype(numeric_feature_series) or numeric_feature_series.isnull().all():
+             # This condition means either it wasn't numeric to begin with and coerce made it all NaN,
+             # or it was already all NaN.
+            raise ValueError(f"Column '{target_feature}' is not numeric, contains only NaN values, or could not be coerced to numeric for plotting.")
+
+        plot_title = title if title else f"Distribution of {target_feature}"
+
+        hist_kwargs = {
+            "x": target_feature,
+            "title": plot_title,
+            "marginal": "box",
+        }
+
+        df_to_plot = features_df.copy()
+        df_to_plot[target_feature] = numeric_feature_series
+
+        hist_kwargs.update(kwargs)
+
+        try:
+            fig = px.histogram(df_to_plot, **hist_kwargs)
+            fig.update_layout(xaxis_title=target_feature, yaxis_title="Frequency")
+        except Exception as e:
+            print(f"Error during histogram generation for feature '{target_feature}': {e}")
+            return None
+
+        if save:
+            filename_prefix = f"jp_feature_{target_feature.replace(' ','_').replace('/','_')}"
+            self.save_plot(fig, filename_prefix)
+
+        return fig
+
+    def plot_japanese_text_features(
+        self,
+        features_df: pd.DataFrame,
+        target_feature: str,
+        title: Optional[str] = None,
+        save: bool = False,
+        **kwargs
+    ) -> Optional[plotly.graph_objs.Figure]:
+        """
+        Plots a histogram of a specified feature from the Japanese text features DataFrame.
+
+        Args:
+            features_df (pd.DataFrame): DataFrame containing Japanese text features,
+                                        typically an output from `get_japanese_text_features`.
+            target_feature (str): The name of the column in `features_df` to plot.
+                                  This column should contain numeric data.
+            title (Optional[str], optional): Title of the plot. If None, a default title
+                                             based on `target_feature` is used. Defaults to None.
+            save (bool, optional): Whether to save the generated plot as an HTML file.
+                                   Defaults to False.
+            **kwargs: Additional keyword arguments to be passed to `plotly.express.histogram`.
+                      (e.g., nbins, color, template, width, height).
+
+        Returns:
+            Optional[plotly.graph_objs.Figure]: The generated Plotly Figure object, or None if plotting fails.
+
+        Raises:
+            ValueError: If `features_df` is empty or not a DataFrame,
+                        or `target_feature` is not found in `features_df`,
+                        or if the `target_feature` column cannot be treated as numeric
+                        or contains only NaN values after conversion.
+        """
+        if not isinstance(features_df, pd.DataFrame) or features_df.empty:
+            raise ValueError("Input DataFrame 'features_df' is empty or not a DataFrame.")
+
+        if target_feature not in features_df.columns:
+            raise ValueError(f"Target feature '{target_feature}' not found in DataFrame.")
+
+        # Attempt to convert target_feature to numeric, handling potential errors
+        try:
+            numeric_feature_series = pd.to_numeric(features_df[target_feature], errors='coerce')
+        except Exception as e: # Catch errors during conversion itself if not just 'coerce'
+            raise ValueError(f"Column '{target_feature}' could not be converted to numeric due to: {e}")
+
+        if not pd.api.types.is_numeric_dtype(numeric_feature_series) or numeric_feature_series.isnull().all():
+             # This condition means either it wasn't numeric to begin with and coerce made it all NaN,
+             # or it was already all NaN.
+            raise ValueError(f"Column '{target_feature}' is not numeric, contains only NaN values, or could not be coerced to numeric for plotting.")
+
+        plot_title = title if title else f"Distribution of {target_feature}"
+
+        hist_kwargs = {
+            "x": target_feature, # Plotly express will use the original column from features_df
+            "title": plot_title,
+            "marginal": "box",
+        }
+        # Ensure features_df passed to px.histogram has the numeric version if conversion happened
+        # However, px.histogram can often handle numeric-like strings if `x` refers to a column name.
+        # For safety, one might pass the coerced series if it's different, but px usually handles this.
+        # Let's assume px.histogram uses the DataFrame and column name.
+
+        # We need to pass a DataFrame to px.histogram. If only the target_feature was modified (coerced),
+        # it's better to use a copy of features_df with the coerced series.
+        df_to_plot = features_df.copy()
+        df_to_plot[target_feature] = numeric_feature_series # Use the coerced (numeric) series for plotting
+
+        hist_kwargs.update(kwargs)
+
+        try:
+            fig = px.histogram(df_to_plot, **hist_kwargs) # Use df_to_plot
+            fig.update_layout(xaxis_title=target_feature, yaxis_title="Frequency")
+        except Exception as e:
+            print(f"Error during histogram generation for feature '{target_feature}': {e}")
+            return None
+
+        if save:
+            filename_prefix = f"jp_feature_{target_feature.replace(' ','_').replace('/','_')}" # Sanitize a bit more
+            self.save_plot(fig, filename_prefix)
+
+        return fig

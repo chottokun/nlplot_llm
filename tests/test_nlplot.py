@@ -555,6 +555,172 @@ def test_nlplot_all_stopwords(mock_save, mock_display, mock_iplot, mock_plot, mo
     assert ("Graph not built or empty" in printed_output or "Node DataFrame not available or empty" in printed_output)
 
 
+# --- Tests for Japanese text processing (TDD for new feature) ---
+# Import JanomeToken for type checking if JANOME_AVAILABLE
+try:
+    from janome.tokenizer import Token as JanomeTokenInTest
+    JANOME_INSTALLED_FOR_TEST = True
+except ImportError:
+    JANOME_INSTALLED_FOR_TEST = False
+    class JanomeTokenInTest: pass # Dummy for type hints if not installed
+
+def test_tokenize_japanese_text(prepare_instance):
+    """
+    (Green/Refactor Phase for TDD Cycle 1)
+    Tests that the _tokenize_japanese_text method tokenizes Japanese text correctly.
+    """
+    npt = prepare_instance
+    text_to_tokenize = "猫が窓から顔を出した。"
+
+    if not nlplot.nlplot.JANOME_AVAILABLE: # Check the flag from the nlplot module itself
+        pytest.skip("Janome not installed or not available in nlplot module, skipping detailed tokenization test.")
+
+    tokens = npt._tokenize_japanese_text(text_to_tokenize)
+
+    assert tokens is not None, "Tokenization returned None, expected a list."
+    assert isinstance(tokens, list), f"Expected a list of tokens, got {type(tokens)}"
+
+    if npt._janome_tokenizer is None :
+         pytest.skip("Janome tokenizer was not initialized properly in NLPlot instance.")
+
+    assert len(tokens) > 0, "Tokenization returned an empty list for non-empty input."
+
+    expected_surfaces = ["猫", "が", "窓", "から", "顔", "を", "出し", "た", "。"]
+    token_surfaces = [token.surface for token in tokens]
+    assert token_surfaces == expected_surfaces, f"Token surfaces differ. Expected {expected_surfaces}, got {token_surfaces}"
+
+    expected_pos_tuples = [
+        ("猫", "名詞,一般"), ("が", "助詞,格助詞,一般"), ("窓", "名詞,一般"), ("から", "助詞,格助詞,一般"),
+        ("顔", "名詞,一般"), ("を", "助詞,格助詞,一般"), ("出し", "動詞,自立"),
+        ("た", "助動詞"), ("。", "記号,句点"),
+    ]
+
+    assert len(tokens) == len(expected_pos_tuples), "Number of tokens does not match expected."
+    for i, token in enumerate(tokens):
+        if JANOME_INSTALLED_FOR_TEST: # Only assert type if Janome is installed in test env
+             assert isinstance(token, JanomeTokenInTest), f"Token {i} is not a JanomeTokenInTest, got {type(token)}"
+        assert token.surface == expected_pos_tuples[i][0]
+        assert token.part_of_speech.startswith(expected_pos_tuples[i][1]), \
+               f"Token {i} ('{token.surface}') POS mismatch. Expected prefix '{expected_pos_tuples[i][1]}', got '{token.part_of_speech}'"
+
+    # Test edge cases for _tokenize_japanese_text
+    assert npt._tokenize_japanese_text("") == [], "Empty string should return empty list."
+    assert npt._tokenize_japanese_text("   ") == [], "Whitespace-only string should return empty list."
+    # Test with non-string input (current implementation returns empty list)
+    assert npt._tokenize_japanese_text(None) == [], "None input should return empty list." # type: ignore
+    assert npt._tokenize_japanese_text(123) == [], "Integer input should return empty list."   # type: ignore
+
+
+@patch("nlplot.nlplot.JANOME_AVAILABLE", False)
+@patch("builtins.print")
+def test_tokenize_japanese_text_janome_not_available(mock_print, prepare_instance):
+    npt = prepare_instance
+    text = "テスト"
+    tokens = npt._tokenize_japanese_text(text)
+    assert tokens == []
+    mock_print.assert_any_call("Warning: Janome is not installed. Japanese tokenization is not available. Please install Janome (e.g., pip install janome).")
+
+
+@patch.object(nlplot.nlplot.JanomeTokenizer, 'tokenize', side_effect=Exception("Simulated Janome Error"))
+@patch("builtins.print")
+def test_tokenize_japanese_text_janome_tokenization_error(mock_print, mock_tokenize_method, prepare_instance):
+    # This test assumes JANOME_AVAILABLE is True, but the tokenize call itself fails
+    if not nlplot.nlplot.JANOME_AVAILABLE:
+        pytest.skip("Janome not installed, cannot test tokenization error scenario.")
+
+    npt = prepare_instance
+    # Ensure tokenizer is initialized for the test to reach the tokenize call
+    if npt._janome_tokenizer is None:
+        npt._janome_tokenizer = nlplot.nlplot.JanomeTokenizer() # Re-init if it was None due to prior test mocks
+
+    text = "エラーを起こすテキスト"
+    tokens = npt._tokenize_japanese_text(text)
+    assert tokens == []
+    mock_print.assert_any_call(f"Error during Janome tokenization for text '{text[:30]}...': Simulated Janome Error")
+
+
+# Test for get_japanese_text_features (replaces _initial version)
+def test_get_japanese_text_features(prepare_instance):
+    """
+    (Green/Refactor Phase for TDD Cycle 2)
+    Tests that get_japanese_text_features method calculates features correctly.
+    """
+    npt = prepare_instance
+    if not nlplot.nlplot.JANOME_AVAILABLE:
+        pytest.skip("Janome not installed, skipping japanese text features test.")
+    if npt._janome_tokenizer is None:
+         pytest.skip("Janome tokenizer not initialized in NLPlot instance, skipping japanese text features test.")
+
+    sample_texts = pd.Series([
+        "猫が窓から顔を出した。",             # text1
+        "非常に美しい花が咲いている。",       # text2
+        "今日は良い天気ですね。",             # text3
+        "。",                               # text4 (記号のみ)
+        "   ",                             # text5 (空白のみ)
+        "",                                # text6 (空文字)
+        None,                              # text7 (None)
+        123,                               # text8 (非文字列, Janome treats "123" as 名詞,数)
+        pd.NA                              # text9 (Pandas NA)
+    ], dtype="object")
+
+    features_df = npt.get_japanese_text_features(sample_texts)
+
+    assert isinstance(features_df, pd.DataFrame)
+    expected_columns = ['text', 'total_tokens', 'avg_token_length',
+                        'noun_ratio', 'verb_ratio', 'adj_ratio', 'punctuation_count']
+    assert list(features_df.columns) == expected_columns
+    assert len(features_df) == len(sample_texts)
+
+    # Expected values - calculated based on Janome's default tokenization
+    # Note: avg_token_length definition: sum of lengths of non-punctuation tokens / count of non-punctuation tokens
+    expected_values = [
+        # text1: "猫が窓から顔を出した。" -> 猫,が,窓,から,顔,を,出し,た,。 (9 tokens total)
+        # Non-punct: 猫(1) が(1) 窓(1) から(2) 顔(1) を(1) 出し(2) た(1) (8 tokens, 10 chars)
+        # Noun: 猫,窓,顔 (3). Verb(自立): 出し(1). Adj(自立): 0. Punct: 。(1)
+        {"text": "猫が窓から顔を出した。", 'total_tokens': 9, 'avg_token_length': 10/8 if 8>0 else 0.0,
+         'noun_ratio': 3/9, 'verb_ratio': 1/9, 'adj_ratio': 0/9, 'punctuation_count': 1},
+        # text2: "非常に美しい花が咲いている。" -> 非常,に,美しい,花,が,咲い,て,いる,。 (9 tokens total)
+        # Non-punct: 非常(2),に(1),美しい(3),花(1),が(1),咲い(2),て(1),いる(2) (8 tokens, 13 chars)
+        # Noun: 非常,花 (2). Verb(自立): 咲い(1). Adj(自立): 美しい(1). Punct: 。(1) ('いる' is 動詞,非自立)
+        {"text": "非常に美しい花が咲いている。", 'total_tokens': 9, 'avg_token_length': 13/8 if 8>0 else 0.0,
+         'noun_ratio': 2/9, 'verb_ratio': 1/9, 'adj_ratio': 1/9, 'punctuation_count': 1},
+        # text3: "今日は良い天気ですね。" -> 今日,は,良い,天気,です,ね,。 (7 tokens total)
+        # Non-punct: 今日(2),は(1),良い(2),天気(2),です(2),ね(1) (6 tokens, 10 chars)
+        # Noun: 今日,天気 (2). Verb(自立): 0. Adj(自立): 良い(1). Punct: 。(1) ('です' is 助動詞)
+        {"text": "今日は良い天気ですね。", 'total_tokens': 7, 'avg_token_length': 10/6 if 6>0 else 0.0,
+         'noun_ratio': 2/7, 'verb_ratio': 0/7, 'adj_ratio': 1/7, 'punctuation_count': 1},
+        # text4: "。" -> 。 (1 token total)
+        # Non-punct: 0 tokens, 0 chars
+        # Noun:0, Verb:0, Adj:0, Punct: 。(1)
+        {"text": "。", 'total_tokens': 1, 'avg_token_length': 0.0,
+         'noun_ratio': 0/1, 'verb_ratio': 0/1, 'adj_ratio': 0/1, 'punctuation_count': 1},
+        # text5: "   " (空白のみ) -> _tokenize_japanese_text returns []
+        {"text": "   ", 'total_tokens': 0, 'avg_token_length': 0.0,
+         'noun_ratio': 0.0, 'verb_ratio': 0.0, 'adj_ratio': 0.0, 'punctuation_count': 0},
+        # text6: "" (空文字) -> _tokenize_japanese_text returns []
+        {"text": "", 'total_tokens': 0, 'avg_token_length': 0.0,
+         'noun_ratio': 0.0, 'verb_ratio': 0.0, 'adj_ratio': 0.0, 'punctuation_count': 0},
+        # text7: None -> original_text becomes "", _tokenize_japanese_text returns []
+        {"text": "", 'total_tokens': 0, 'avg_token_length': 0.0,
+         'noun_ratio': 0.0, 'verb_ratio': 0.0, 'adj_ratio': 0.0, 'punctuation_count': 0},
+        # text8: 123 -> Janome: 123 (名詞,数,*,*) (1 token)
+        # Non-punct: 123 (1 token, 3 chars)
+        {"text": "123", 'total_tokens': 1, 'avg_token_length': 3/1 if 1>0 else 0.0,
+         'noun_ratio': 1/1, 'verb_ratio': 0/1, 'adj_ratio': 0/1, 'punctuation_count': 0},
+        # text9: pd.NA -> original_text becomes "", _tokenize_japanese_text returns []
+        {"text": "", 'total_tokens': 0, 'avg_token_length': 0.0,
+         'noun_ratio': 0.0, 'verb_ratio': 0.0, 'adj_ratio': 0.0, 'punctuation_count': 0},
+    ]
+
+    for i, expected_row_dict in enumerate(expected_values):
+        for col, expected_val in expected_row_dict.items():
+            actual_val = features_df.iloc[i][col]
+            if isinstance(expected_val, float):
+                assert pytest.approx(actual_val, 0.01) == expected_val, f"Mismatch in {col} for text index {i} ('{sample_texts.iloc[i]}')"
+            else:
+                assert actual_val == expected_val, f"Mismatch in {col} for text index {i} ('{sample_texts.iloc[i]}')"
+
+
 # --- Tests for stopwords combinations and min_edge_frequency ---
 @pytest.mark.parametrize(
     "init_stopwords_file_content, method_stopwords, expected_combined_stopwords_check",
@@ -645,3 +811,104 @@ def test_nlplot_min_edge_frequency_effect(prepare_data, tmp_path): # Using prepa
 # and the global TTF_FONT_PATH is handled carefully or mocked appropriately where its absence is tested.
 # The ensure_font_file_exists at the module level is for convenience for most tests.
 # Tests for missing default font should mock nlplot.nlplot.DEFAULT_FONT_PATH.
+
+
+def test_plot_japanese_text_features_initial(prepare_instance):
+    """
+    (Red Phase for TDD Cycle 3 - Optional Plotting Feature)
+    Tests that plot_japanese_text_features method initially does not exist.
+    """
+    npt = prepare_instance
+    dummy_features_data = {
+        'text': ["text1", "text2"],
+        'total_tokens': [10, 20],
+        'avg_token_length': [1.5, 2.0],
+        'noun_ratio': [0.3, 0.4],
+        'verb_ratio': [0.2, 0.3],
+        'adj_ratio': [0.1, 0.05],
+        'punctuation_count': [1, 3]
+    }
+    dummy_features_df = pd.DataFrame(dummy_features_data)
+
+    # This test is now replaced by the more comprehensive test_plot_japanese_text_features below
+    pass
+
+# Green/Refactor Phase for plotting (replaces _initial version)
+def test_plot_japanese_text_features(prepare_instance):
+    """
+    (Green/Refactor Phase for TDD Cycle 3 - Optional Plotting Feature)
+    Tests that plot_japanese_text_features method generates plots correctly.
+    """
+    npt = prepare_instance
+    if not nlplot.nlplot.JANOME_AVAILABLE:
+        pytest.skip("Janome not installed, skipping plot_japanese_text_features test as it relies on features_df.")
+    if npt._janome_tokenizer is None:
+         pytest.skip("Janome tokenizer not initialized, skipping plot_japanese_text_features test.")
+
+    # Generate actual features_df using the existing method
+    sample_texts = pd.Series([
+        "猫が窓から顔を出した。",
+        "非常に美しい花が咲いている。",
+        "今日は良い天気ですね。散歩に行きましょうか。",
+        "素晴らしい一日でした。"
+    ], dtype="object")
+    features_df = npt.get_japanese_text_features(sample_texts)
+
+    if features_df.empty or 'total_tokens' not in features_df.columns:
+        pytest.skip("Feature DataFrame from get_japanese_text_features is unsuitable (empty or missing columns) for this plot test.")
+
+    # --- Test for a valid feature ('total_tokens') ---
+    target_col_to_plot = 'total_tokens'
+    plot_title = "Distribution of Total Tokens"
+
+    with patch("plotly.offline.plot") as mock_plotly_offline_plot:
+        fig = npt.plot_japanese_text_features(
+            features_df=features_df,
+            target_feature=target_col_to_plot,
+            title=plot_title,
+            save=True,
+            nbins=10
+        )
+
+        assert isinstance(fig, plotly.graph_objs.Figure), "Plot method did not return a Plotly Figure object."
+        assert fig.layout.title.text == plot_title
+        assert fig.layout.xaxis.title.text == target_col_to_plot
+        assert len(fig.data) == 1
+
+        mock_plotly_offline_plot.assert_called_once()
+        call_args = mock_plotly_offline_plot.call_args
+        assert call_args is not None
+        saved_filename = call_args[1].get('filename', '')
+        assert "jp_feature_total_tokens.html" in saved_filename
+
+    # --- Test for another valid feature ('noun_ratio') ---
+    target_col_ratio = 'noun_ratio'
+    plot_title_ratio = "Distribution of Noun Ratio"
+    fig_ratio = npt.plot_japanese_text_features(features_df=features_df, target_feature=target_col_ratio, title=plot_title_ratio)
+    assert isinstance(fig_ratio, plotly.graph_objs.Figure)
+    assert fig_ratio.layout.title.text == plot_title_ratio
+
+    # --- Test for a non-existent feature ---
+    with pytest.raises(ValueError, match="Target feature 'non_existent_feature' not found in DataFrame."):
+        npt.plot_japanese_text_features(features_df=features_df, target_feature='non_existent_feature')
+
+    # --- Test with empty DataFrame input ---
+    empty_df_with_cols = pd.DataFrame(columns=features_df.columns)
+    with pytest.raises(ValueError, match="Input DataFrame 'features_df' is empty or not a DataFrame."):
+        npt.plot_japanese_text_features(features_df=empty_df_with_cols, target_feature='total_tokens')
+
+    empty_df_no_cols = pd.DataFrame()
+    with pytest.raises(ValueError, match="Input DataFrame 'features_df' is empty or not a DataFrame."):
+        npt.plot_japanese_text_features(features_df=empty_df_no_cols, target_feature='total_tokens')
+
+    # --- Test with target_feature column having all NaNs (after coercion) ---
+    features_df_nan = features_df.copy()
+    features_df_nan[target_col_to_plot] = np.nan
+    with pytest.raises(ValueError, match=f"Column '{target_col_to_plot}' is not numeric, contains only NaN values, or could not be coerced to numeric for plotting."):
+         npt.plot_japanese_text_features(features_df=features_df_nan, target_feature=target_col_to_plot)
+
+    # --- Test with target_feature column being non-numeric and not coercible ---
+    features_df_non_coercible = features_df.copy()
+    features_df_non_coercible['string_col'] = ["abc", "def", "ghi", "jkl"] # Length matches sample_texts
+    with pytest.raises(ValueError, match=f"Column 'string_col' is not numeric, contains only NaN values, or could not be coerced to numeric for plotting."):
+        npt.plot_japanese_text_features(features_df=features_df_non_coercible, target_feature='string_col')
