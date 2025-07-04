@@ -146,16 +146,25 @@ class NLPlot():
             self.df.loc[:, self.target_col] = self.df[self.target_col].astype(str).map(lambda x: x.split())
         self.output_file_path = output_file_path
         self.font_path = font_path if font_path and os.path.exists(font_path) else DEFAULT_FONT_PATH
-        if font_path and not os.path.exists(font_path):
+        if font_path and not os.path.exists(font_path): # User specified a font, but it wasn't found
             print(f"Warning: Specified font_path '{font_path}' not found. Falling back to default: {self.font_path}")
+
+        if not os.path.exists(self.font_path): # Check if the determined font_path (either custom or default) exists
+            print(f"Warning: The determined font path '{self.font_path}' does not exist. WordCloud may fail if a valid font is not provided at runtime or if the default font is missing.")
 
         self.default_stopwords = []
         if default_stopwords_file_path and os.path.exists(default_stopwords_file_path):
             try:
                 with open(default_stopwords_file_path, 'r', encoding='utf-8') as f:
                     self.default_stopwords = [line.strip() for line in f if line.strip()]
+            except PermissionError:
+                print(f"Warning: Permission denied to read stopwords file '{default_stopwords_file_path}'. Continuing without these default stopwords.")
+                self.default_stopwords = []
+            except IOError as e:
+                print(f"Warning: Could not read stopwords file '{default_stopwords_file_path}' due to an IO error: {e}. Continuing without these default stopwords.")
+                self.default_stopwords = []
             except Exception as e:
-                print(f"Warning: Could not read stopwords file {default_stopwords_file_path}: {e}")
+                print(f"Warning: An unexpected error occurred while reading stopwords file '{default_stopwords_file_path}': {e}. Continuing without these default stopwords.")
                 self.default_stopwords = []
 
     def get_stopword(self, top_n: int = 10, min_freq: int = 5) -> list:
@@ -373,27 +382,47 @@ class NLPlot():
 
         Returns:
             None: Displays the word cloud in IPython and optionally saves it.
+
+        Notes:
+            - Font Handling:
+                The method prioritizes fonts in this order:
+                1. `font_path` argument of this method (if provided and valid).
+                2. `self.font_path` (set during `NLPlot` initialization, can be custom or default).
+                3. `DEFAULT_FONT_PATH` (the library's bundled default font).
+                If a specified font file is not found, a warning is printed, and the next font in priority is attempted.
+                If a font file is found but is invalid (e.g., corrupted, not a TTF), a warning is printed. If this was a custom
+                font, a fallback to the default font (`DEFAULT_FONT_PATH`) is attempted. If the default font itself is invalid
+                or if all fallbacks fail, an error message is printed, and the word cloud will not be generated.
+            - Mask File:
+                If `mask_file` is specified but not found, cannot be read (e.g., due to permissions or file corruption),
+                or is not a valid image format, a warning is printed, and the word cloud is generated without a mask.
+            - Text Processing:
+                Input texts are converted to lowercase. Words are tokenized by spaces.
+                If after applying stopwords, the resulting text corpus is empty, a warning is printed, and no
+                word cloud is generated.
         """
         current_font_path = font_path if font_path and os.path.exists(font_path) else self.font_path
-        if font_path and not os.path.exists(font_path):
-             print(f"Warning: Specified font_path '{font_path}' for wordcloud not found. Falling back to: {current_font_path}")
-        if not os.path.exists(current_font_path):
-            print(f"Error: Font file not found at {current_font_path}. WordCloud cannot be generated.")
-            # Fallback to a very basic, widely available font if possible, or skip.
-            # For now, we'll try to proceed, WordCloud might use a default or error out.
-            # A better solution would be to bundle a default font or ensure one is accessible.
-            # Or, make font_path a required argument if no default can be guaranteed.
-            # current_font_path = None # This would make WordCloud use its own default if it has one.
+        if font_path and not os.path.exists(font_path): # User specified a font for this call, but it wasn't found
+             print(f"Warning: Specified font_path '{font_path}' for wordcloud not found. Falling back to instance/default: {current_font_path}")
+
+        # current_font_path is now the best candidate (method arg > instance default > library default constant path)
+        # The try-except block below will handle if it's missing or invalid.
 
         mask = None
         if mask_file and os.path.exists(mask_file):
             try:
                 mask = np.array(Image.open(mask_file))
-            except Exception as e:
-                print(f"Warning: Could not load mask file {mask_file}: {e}")
+            except PermissionError:
+                print(f"Warning: Permission denied to read mask file {mask_file}. Proceeding without mask.")
                 mask = None
-        elif mask_file:
-            print(f"Warning: Mask file {mask_file} not found.")
+            except IOError as e:
+                print(f"Warning: Could not load mask file {mask_file} due to an IO error: {e}. Proceeding without mask.")
+                mask = None
+            except Exception as e: # Other PIL errors
+                print(f"Warning: Could not load mask file {mask_file}: {e}. Proceeding without mask.")
+                mask = None
+        elif mask_file: # Path provided but os.path.exists was false
+            print(f"Warning: Mask file {mask_file} not found. Proceeding without mask.")
 
 
         # Ensure elements in target_col are lists of strings, then join them
@@ -434,31 +463,73 @@ class NLPlot():
                         prefer_horizontal=1,
                         colormap=colormap)
         try:
+            # First attempt with current_font_path
+            if not os.path.exists(current_font_path): # Check before attempting to use
+                 raise OSError(f"Font file not found at {current_font_path}")
+
+            wordcloud_instance = WordCloud(
+                            background_color='white', font_step=1, contour_width=0, contour_color='steelblue',
+                            font_path=current_font_path, stopwords=current_stopwords, max_words=max_words,
+                            max_font_size=max_font_size, random_state=42, width=width, height=height,
+                            mask=mask, collocations=False, prefer_horizontal=1, colormap=colormap)
             wordcloud_instance.generate(text_corpus)
-        except ValueError as e:
-            if "empty" in str(e).lower(): # Handle cases where all words are stopwords
-                 print(f"Warning: WordCloud could not be generated. All words might have been filtered out by stopwords. Details: {e}")
-                 return # or display a blank image / message
-            else:
-                raise e
 
-
-        def show_array(img_array, save_flag, output_path, filename_prefix):
-            stream = BytesIO()
-            pil_img = Image.fromarray(img_array)
-            if save_flag:
-                date_str = str(pd.to_datetime(datetime.datetime.now())).split(' ')[0]
-                filename = f"{date_str}_{filename_prefix}_wordcloud.png"
+        except (OSError, TypeError) as e: # Errors related to font file issues (not found, wrong type, corrupted)
+            print(f"Warning: Error processing font at '{current_font_path}': {e}.")
+            # Attempt to fallback to DEFAULT_FONT_PATH if current_font_path wasn't already it AND DEFAULT_FONT_PATH exists
+            if current_font_path != DEFAULT_FONT_PATH and os.path.exists(DEFAULT_FONT_PATH):
+                print(f"Attempting to fallback to default font: {DEFAULT_FONT_PATH}")
                 try:
-                    pil_img.save(os.path.join(output_path, filename))
-                    print(f"Wordcloud image saved to {os.path.join(output_path, filename)}")
-                except Exception as e:
-                    print(f"Error saving wordcloud image: {e}")
+                    current_font_path = DEFAULT_FONT_PATH # Switch to default
+                    wordcloud_instance = WordCloud(
+                                    background_color='white', font_step=1, contour_width=0, contour_color='steelblue',
+                                    font_path=current_font_path, stopwords=current_stopwords, max_words=max_words,
+                                    max_font_size=max_font_size, random_state=42, width=width, height=height,
+                                    mask=mask, collocations=False, prefer_horizontal=1, colormap=colormap)
+                    wordcloud_instance.generate(text_corpus)
+                except Exception as fallback_e:
+                    print(f"Error: Fallback to default font ('{DEFAULT_FONT_PATH}') also failed: {fallback_e}. WordCloud cannot be generated.")
+                    return
+            elif current_font_path == DEFAULT_FONT_PATH: # The default font itself caused the error
+                 print(f"Error: Default font at '{DEFAULT_FONT_PATH}' seems to be an issue. WordCloud cannot be generated. Details: {e}")
+                 return
+            else: # Default font path does not exist, and the custom one failed
+                 print(f"Error: Default font not found at '{DEFAULT_FONT_PATH}' and custom font failed. WordCloud cannot be generated.")
+                 return
+        except ValueError as e: # Specifically for generate() if text corpus is empty after stopwords
+            if "empty" in str(e).lower() or "zero" in str(e).lower():
+                 print(f"Warning: WordCloud could not be generated. All words might have been filtered out or corpus is empty. Details: {e}")
+                 return
+            else:
+                print(f"An unexpected ValueError occurred during WordCloud generation: {e}") # Other ValueErrors
+                return # Or raise e if it should be fatal
+        except Exception as e: # Catch-all for other unexpected errors
+            print(f"An unexpected error occurred during WordCloud generation: {e}")
+            return
 
-            pil_img.save(stream, 'png')
+        # If we reach here, wordcloud_instance should be valid and generated.
+        img_array = wordcloud_instance.to_array()
+
+        # Nested function for display and save
+        def show_array(img_array_to_show, save_flag, output_path, filename_prefix_wc):
+            stream = BytesIO()
+            pil_img = Image.fromarray(img_array_to_show)
+            if save_flag:
+                date_str = pd.to_datetime(datetime.datetime.now()).strftime('%Y-%m-%d') # More standard date format
+                filename = f"{date_str}_{filename_prefix_wc}_wordcloud.png"
+                full_save_path = os.path.join(output_path, filename)
+                try:
+                    os.makedirs(output_path, exist_ok=True)
+                    pil_img.save(full_save_path)
+                    print(f"Wordcloud image saved to {full_save_path}")
+                except PermissionError:
+                    print(f"Error: Permission denied to save wordcloud image to '{full_save_path}'. Please check directory permissions.")
+                except Exception as e_save:
+                    print(f"Error saving wordcloud image to '{full_save_path}': {e_save}")
+
+            pil_img.save(stream, 'png') # Save to stream for display
             IPython.display.display(IPython.display.Image(data=stream.getvalue()))
 
-        img_array = wordcloud_instance.to_array()
         show_array(img_array, save, self.output_file_path, "wordcloud_plot")
         return None
 
@@ -836,52 +907,82 @@ class NLPlot():
 
     def save_plot(self, fig, title_prefix: str) -> None: # Renamed title to title_prefix
         """Save the HTML file
-        # ... (docstringはそのまま)
+        Args:
+            fig (plotly.graph_objs.Figure): The Plotly figure object to save.
+            title_prefix (str): A prefix for the filename. The final filename will be
+                                `YYYY-MM-DD_title_prefix.html`. Special characters in
+                                `title_prefix` will be replaced with underscores.
+        Returns:
+            None
+
+        Notes:
+            If `output_file_path` (set during `NLPlot` initialization) is not writable,
+            a `PermissionError` will be caught, and an error message printed.
         """
         if not title_prefix or not isinstance(title_prefix, str):
-            title_prefix = "plot" # Default prefix if None or invalid
-        title_prefix = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in title_prefix) # Sanitize
+            title_prefix = "plot"
+        title_prefix = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in title_prefix)
 
         date_str = pd.to_datetime(datetime.datetime.now()).strftime('%Y-%m-%d')
         filename = f"{date_str}_{title_prefix}.html"
         full_path = os.path.join(self.output_file_path, filename)
         try:
-            os.makedirs(self.output_file_path, exist_ok=True) # Ensure directory exists
+            os.makedirs(self.output_file_path, exist_ok=True)
             plotly.offline.plot(fig, filename=full_path, auto_open=False)
             print(f"Plot saved to {full_path}")
+            except PermissionError:
+            print(f"Error: Permission denied to write plot to '{full_path}'. Please check directory permissions.")
         except Exception as e:
-            print(f"Error saving plot to {full_path}: {e}")
+            print(f"Error saving plot to '{full_path}': {e}")
         return None
 
-    def save_tables(self, prefix: str = "nlplot_output") -> None: # Added prefix argument
-        """Storing a data frame"""
-        if not hasattr(self, 'node_df') or not hasattr(self, 'edge_df'):
-            print("Warning: node_df or edge_df not available. Cannot save tables.")
+    def save_tables(self, prefix: str = "nlplot_output") -> None:
+        """
+        Saves the generated node and edge DataFrames to CSV files.
+
+        The DataFrames `self.node_df` and `self.edge_df` (typically generated by
+        `build_graph`) are saved.
+
+        Args:
+            prefix (str, optional): A prefix for the filenames. Files will be named
+                                    `YYYY-MM-DD_prefix_node_df.csv` and
+                                    `YYYY-MM-DD_prefix_edge_df.csv`.
+                                    Defaults to "nlplot_output".
+        Returns:
+            None
+
+        Notes:
+            If `output_file_path` (set during `NLPlot` initialization) is not writable,
+            a `PermissionError` will be caught, and an error message printed.
+            If `node_df` or `edge_df` are not available or empty, they will not be saved,
+            and a message will be printed.
+        """
+        if not hasattr(self, 'node_df') or not hasattr(self, 'edge_df'): # Check if attributes exist
+            print("Warning: node_df or edge_df attributes not found. Ensure build_graph() has been called. Cannot save tables.")
             return
 
         date_str = pd.to_datetime(datetime.datetime.now()).strftime('%Y-%m-%d')
         sanitized_prefix = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in prefix)
 
         try:
-            os.makedirs(self.output_file_path, exist_ok=True) # Ensure directory exists
-            if not self.node_df.empty:
+            os.makedirs(self.output_file_path, exist_ok=True)
+
+            if hasattr(self, 'node_df') and isinstance(self.node_df, pd.DataFrame) and not self.node_df.empty:
                 node_filename = os.path.join(self.output_file_path, f"{date_str}_{sanitized_prefix}_node_df.csv")
                 self.node_df.to_csv(node_filename, index=False)
                 print(f'Saved nodes to {node_filename}')
             else:
-                print('Node DataFrame is empty. Not saved.')
+                print('Node DataFrame is empty or not available. Not saved.')
 
-            if not self.edge_df.empty:
+            if hasattr(self, 'edge_df') and isinstance(self.edge_df, pd.DataFrame) and not self.edge_df.empty:
                 edge_filename = os.path.join(self.output_file_path, f"{date_str}_{sanitized_prefix}_edge_df.csv")
                 self.edge_df.to_csv(edge_filename, index=False)
                 print(f'Saved edges to {edge_filename}')
             else:
-                print('Edge DataFrame is empty. Not saved.')
+                print('Edge DataFrame is empty or not available. Not saved.')
 
-            # Saving the original df might be too large or redundant, consider if really needed
-            # df_filename = os.path.join(self.output_file_path, f"{date_str}_{sanitized_prefix}_original_df.csv")
-            # self.df.to_csv(df_filename, index=False)
-            # print(f'Saved original DataFrame to {df_filename}')
+        except PermissionError:
+            print(f"Error: Permission denied to write tables in '{self.output_file_path}'. Please check directory permissions.")
         except Exception as e:
             print(f"Error saving tables: {e}")
         return None

@@ -133,4 +133,5 @@ pytest
 - WordCloud library is used for generating word clouds.
   - By default, `nlplot` uses a bundled version of the MPLUS font (mplus-1c-regular) for word clouds to support Japanese and English.
   - You can specify a custom font using the `font_path` parameter in `NLPlot()` constructor or `npt.wordcloud()`.
+  - `nlplot` includes enhanced handling for cases where specified fonts are not found or are invalid, attempting to fall back to a default font and providing warnings to the user.
   - MPLUS Font: https://mplus-fonts.osdn.jp/about.html
