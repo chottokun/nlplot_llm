@@ -57,12 +57,29 @@ df.head()
 ## Quick start - Python API
 ```python
 import nlplot
+import pandas as pd # Required for DataFrame creation
 
-# target_col as a list type or a string separated by a space.
+# Sample data (ensure this is defined before use)
+target_col = "text"
+texts = [
+    "Think rich look poor",
+    "When you come to a roadblock, take a detour",
+    "When it is dark enough, you can see the stars",
+    "Never let your memories be greater than your dreams",
+    "Victory is sweetest when you’ve known defeat"
+]
+df = pd.DataFrame({target_col: texts})
+
+# Initialize NLPlot
+# You can specify a custom font path for word clouds.
+# If font_path is not provided or the specified font is not found,
+# a default bundled font will be used.
+# npt = nlplot.NLPlot(df, target_col='text', font_path='/path/to/your/font.ttf')
 npt = nlplot.NLPlot(df, target_col='text')
 
 # Stopword calculations can be performed.
-stopwords = npt.get_stopword(top_n=30, min_freq=0)
+# These stopwords will be automatically used by plotting methods unless overridden.
+stopwords = npt.get_stopword(top_n=1, min_freq=0) # Adjusted for small sample
 
 # 1. N-gram bar chart
 npt.bar_ngram(title='uni-gram', ngram=1, top_n=50, stopwords=stopwords)
@@ -72,20 +89,29 @@ npt.bar_ngram(title='bi-gram', ngram=2, top_n=50, stopwords=stopwords)
 npt.treemap(title='Tree of Most Common Words', ngram=1, top_n=30, stopwords=stopwords)
 
 # 3. Histogram of the word count
-npt.word_distribution(title='words distribution')
+npt.word_distribution(title='Word Count Distribution')
 
 # 4. wordcloud
-npt.wordcloud(stopwords=stopwords, colormap='tab20_r')
+# You can also specify custom stopwords or a different font path here.
+npt.wordcloud(
+    stopwords=stopwords,
+    colormap='tab20_r',
+    # font_path='/path/to/another/font.ttf' # Optional: override instance font
+)
 
 # 5. co-occurrence networks
-npt.build_graph(stopwords=stopwords, min_edge_frequency=10)
-# The number of nodes and edges to which this output is plotted.
-# If this number is too large, plotting will take a long time, so adjust the [min_edge_frequency] well.
->> node_size:70, edge_size:166
-npt.co_network(title='Co-occurrence network')
+# Adjust min_edge_frequency based on your dataset size.
+# For the small sample, min_edge_frequency=0 or 1 might be needed to see a graph.
+npt.build_graph(stopwords=stopwords, min_edge_frequency=1)
+# Expected output like: node_size:X, edge_size:Y
+npt.co_network(title='Co-occurrence Network')
 
 # 6. sunburst chart
-npt.sunburst(title='sunburst chart', colorscale=True)
+# Ensure build_graph has been called and resulted in some nodes/edges.
+if not npt.node_df.empty:
+    npt.sunburst(title='Sunburst Chart', colorscale=True)
+else:
+    print("Node data is empty, skipping sunburst chart.")
 
 ```
 
@@ -100,11 +126,11 @@ pytest
 
 ## Other
 
-- Plotly is used to plot the figure
-    - https://plotly.com/python/
-
-- co-occurrence networks is used to calculate the co-occurrence network
-    - https://networkx.github.io/documentation/stable/tutorial.html
-
-- wordcloud uses the following fonts
-    - https://mplus-fonts.osdn.jp/about.html
+- Plotly is used for most interactive figures.
+  - https://plotly.com/python/
+- NetworkX is used for co-occurrence network calculations.
+  - https://networkx.github.io/documentation/stable/tutorial.html
+- WordCloud library is used for generating word clouds.
+  - By default, `nlplot` uses a bundled version of the MPLUS font (mplus-1c-regular) for word clouds to support Japanese and English.
+  - You can specify a custom font using the `font_path` parameter in `NLPlot()` constructor or `npt.wordcloud()`.
+  - MPLUS Font: https://mplus-fonts.osdn.jp/about.html
