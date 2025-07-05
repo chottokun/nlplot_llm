@@ -27,5 +27,5 @@ setup(
     packages=find_packages(exclude=('tests')),
     tests_require=["pytest"],
     package_data={'nlplot_llm': ['data/*']}, # Corrected package name
-    python_requires='>=3.6'
+    python_requires='>=3.7' # Updated Python requirement
 )
