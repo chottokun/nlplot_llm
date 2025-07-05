@@ -8,10 +8,11 @@ from PIL import Image # For mocking Image.open related errors
 import datetime # For predictable date string in file save tests
 
 
-from nlplot import NLPlot, get_colorpalette, generate_freq_df, DEFAULT_FONT_PATH as NLPLOT_DEFAULT_FONT_PATH # Import for mocking
+from nlplot_llm import NLPlotLLM, get_colorpalette, generate_freq_df
+from nlplot_llm.core import DEFAULT_FONT_PATH as NLPLOT_LLM_DEFAULT_FONT_PATH # Import for mocking
 
 # Helper to create a dummy font file if it doesn't exist.
-def ensure_font_file_exists(font_path_to_check = NLPLOT_DEFAULT_FONT_PATH):
+def ensure_font_file_exists(font_path_to_check = NLPLOT_LLM_DEFAULT_FONT_PATH):
     font_dir = os.path.dirname(font_path_to_check)
     if not os.path.exists(font_path_to_check):
         if font_dir: # Ensure directory exists only if font_dir is not empty (e.g. for relative paths)
@@ -24,8 +25,10 @@ def ensure_font_file_exists(font_path_to_check = NLPLOT_DEFAULT_FONT_PATH):
     return font_path_to_check
 
 # Ensure the default font path used by nlplot exists for tests that rely on it.
-# This TTF_FONT_PATH will be the one nlplot.nlplot.DEFAULT_FONT_PATH points to.
-TTF_FONT_PATH = ensure_font_file_exists()
+# This TTF_FONT_PATH will be the one nlplot_llm.core.DEFAULT_FONT_PATH points to.
+# Since DEFAULT_FONT_PATH is now None, this helper needs adjustment or tests using it need to change.
+# For now, let's assume tests might still try to use a path, or we mock it appropriately.
+TTF_FONT_PATH = ensure_font_file_exists() if NLPLOT_LLM_DEFAULT_FONT_PATH else None
 
 
 @pytest.fixture
@@ -51,24 +54,24 @@ def data_with_empty_text():
 def prepare_instance(prepare_data, tmp_path):
     output_dir = tmp_path / "test_outputs"
     os.makedirs(output_dir, exist_ok=True)
-    # For these tests, we want NLPlot to try and use its actual default font logic first.
+    # For these tests, we want NLPlotLLM to try and use its actual default font logic first.
     # So, don't pass font_path to constructor unless testing that specific override.
-    return NLPlot(prepare_data.copy(), target_col="text", output_file_path=str(output_dir))
+    return NLPlotLLM(prepare_data.copy(), target_col="text", output_file_path=str(output_dir))
 
 @pytest.fixture
 def prepare_instance_custom_font(prepare_data, tmp_path):
     output_dir = tmp_path / "test_outputs_custom_font"
     os.makedirs(output_dir, exist_ok=True)
     custom_font = tmp_path / "custom_font.ttf" # Create a dummy custom font
-    ensure_font_file_exists(str(custom_font))
-    return NLPlot(prepare_data.copy(), target_col="text", output_file_path=str(output_dir), font_path=str(custom_font))
+    ensure_font_file_exists(str(custom_font)) # This will only create if path is not None
+    return NLPlotLLM(prepare_data.copy(), target_col="text", output_file_path=str(output_dir), font_path=str(custom_font))
 
 
 @pytest.fixture
 def prepare_instance_empty_df(empty_data, tmp_path):
     output_dir = tmp_path / "test_outputs_empty"
     os.makedirs(output_dir, exist_ok=True)
-    return NLPlot(empty_data.copy(), target_col="text", output_file_path=str(output_dir))
+    return NLPlotLLM(empty_data.copy(), target_col="text", output_file_path=str(output_dir))
 
 
 @pytest.fixture
@@ -137,47 +140,65 @@ def test_generate_freq_df_with_stopwords(series_data_for_freq_df):
         assert "to" not in df_with_stopwords["word"].tolist()
 
 
-# --- Test NLPlot class ---
-def test_nlplot_init(prepare_data, tmp_path):
+# --- Test NLPlotLLM class ---
+def test_nlplot_llm_init(prepare_data, tmp_path):
     output_path = tmp_path / "init_test_out"
-    npt = NLPlot(prepare_data.copy(), target_col="text", output_file_path=str(output_path))
+    npt = NLPlotLLM(prepare_data.copy(), target_col="text", output_file_path=str(output_path))
     assert isinstance(npt.df, pd.DataFrame)
     if not npt.df.empty:
         assert isinstance(npt.df["text"].iloc[0], list)
     assert npt.output_file_path == str(output_path)
-    assert npt.font_path == TTF_FONT_PATH # Should fallback to default if not specified
+    # DEFAULT_FONT_PATH is now None, so npt.font_path will be None if not specified
+    assert npt.font_path == (TTF_FONT_PATH if TTF_FONT_PATH else None)
+
 
 @patch("builtins.print")
-def test_nlplot_init_custom_font_found(mock_print, prepare_data, tmp_path):
+def test_nlplot_llm_init_custom_font_found(mock_print, prepare_data, tmp_path):
     custom_font_file = tmp_path / "my_custom.ttf"
     ensure_font_file_exists(str(custom_font_file)) # Create dummy custom font
-    npt = NLPlot(prepare_data.copy(), target_col="text", font_path=str(custom_font_file))
+    npt = NLPlotLLM(prepare_data.copy(), target_col="text", font_path=str(custom_font_file))
     assert npt.font_path == str(custom_font_file)
     mock_print.assert_not_called() # No warning if font is found
 
 @patch("builtins.print")
-def test_nlplot_init_custom_font_not_found(mock_print, prepare_data):
+def test_nlplot_llm_init_custom_font_not_found(mock_print, prepare_data):
     non_existent_font = "non_existent_custom_font.ttf"
-    npt = NLPlot(prepare_data.copy(), target_col="text", font_path=non_existent_font)
-    assert npt.font_path == TTF_FONT_PATH # Should fallback to default
-    mock_print.assert_any_call(f"Warning: Specified font_path '{non_existent_font}' not found. Falling back to default: {TTF_FONT_PATH}")
+    npt = NLPlotLLM(prepare_data.copy(), target_col="text", font_path=non_existent_font)
+    # Behavior change: If custom font not found, self.font_path is set to the non-existent path,
+    # and wordcloud method handles the fallback or uses WordCloud default.
+    # The instance's self.font_path will be the user-provided (but non-existent) path.
+    # The actual fallback to None for WordCloud happens inside the wordcloud method.
+    assert npt.font_path == non_existent_font
+    # The warning about "falling back to default" might not be printed at init anymore,
+    # but rather when wordcloud is called. Let's check wordcloud's specific warning.
+    # For init, we might only get a warning if DEFAULT_FONT_PATH itself was invalid and used.
+    # Since DEFAULT_FONT_PATH is None, the init fallback logic changes.
+    # If font_path is given and invalid, it's stored. If font_path is None, self.font_path becomes None.
+    # The old test asserted fallback to TTF_FONT_PATH which was the default.
+    # Now, if a custom font is specified and not found, font_path is stored as is.
+    # The warning "Specified font_path ... not found. Falling back to default" is no longer accurate in __init__.
+    # It should be: "Specified font_path 'non_existent_custom_font.ttf' not found."
+    # And then wordcloud method will say "Will attempt to use WordCloud default."
+    # Let's simplify: the __init__ should print a warning if the *provided* font_path doesn't exist.
+    mock_print.assert_any_call(f"Warning: Specified font_path '{non_existent_font}' not found. Falling back to default: {NLPLOT_LLM_DEFAULT_FONT_PATH if NLPLOT_LLM_DEFAULT_FONT_PATH else None}")
+
 
 @patch("builtins.print")
-@patch("nlplot.nlplot.DEFAULT_FONT_PATH", "truly_missing_default.ttf") # Mock the default path to non-existent
-@patch("os.path.exists", side_effect=lambda p: False if p == "truly_missing_default.ttf" else os.path.exists(p)) # only default is missing
-def test_nlplot_init_default_font_missing_warning(mock_os_exists, mock_print, prepare_data):
-    npt = NLPlot(prepare_data.copy(), target_col="text")
-    assert npt.font_path == "truly_missing_default.ttf" # It will still be set to this path
-    mock_print.assert_any_call(f"Warning: The determined font path 'truly_missing_default.ttf' does not exist. WordCloud may fail if a valid font is not provided at runtime.")
-
+# To test the scenario where DEFAULT_FONT_PATH was a file that didn't exist, we'd have to mock it at nlplot_llm.core
+# But since it's None now, this specific test case about a "missing default file" is less relevant.
+# Instead, we test that if no font_path is given, npt.font_path is None.
+def test_nlplot_llm_init_no_font_specified(mock_print, prepare_data):
+    npt = NLPlotLLM(prepare_data.copy(), target_col="text")
+    assert npt.font_path is None # Because DEFAULT_FONT_PATH is None
+    # No specific warning about default font missing at init, unless it was a bad path. Wordcloud will handle.
 
 @patch("builtins.print")
-def test_nlplot_init_with_default_stopwords_file(mock_print, tmp_path, prepare_data):
+def test_nlplot_llm_init_with_default_stopwords_file(mock_print, tmp_path, prepare_data):
     stopwords_content = "stopword1\nstopword2\n"
     p = tmp_path / "stopwords.txt"
     p.write_text(stopwords_content)
     df = pd.DataFrame({"text": ["stopword1 and testword1"]})
-    npt = NLPlot(df, target_col="text", default_stopwords_file_path=str(p))
+    npt = NLPlotLLM(df, target_col="text", default_stopwords_file_path=str(p))
     assert "stopword1" in npt.default_stopwords
     assert "stopword2" in npt.default_stopwords
     stopwords_calc = npt.get_stopword(top_n=0, min_freq=0)
@@ -185,34 +206,34 @@ def test_nlplot_init_with_default_stopwords_file(mock_print, tmp_path, prepare_d
 
 @patch("builtins.print")
 @patch("builtins.open", side_effect=PermissionError("Test permission error for reading stopwords"))
-def test_nlplot_init_stopwords_permission_error(mock_open, mock_print, prepare_data, tmp_path):
+def test_nlplot_llm_init_stopwords_permission_error(mock_open, mock_print, prepare_data, tmp_path):
     dummy_sw_path = str(tmp_path / "dummy_stopwords.txt")
-    with patch("os.path.exists", return_value=True):
-        npt = NLPlot(prepare_data.copy(), target_col="text", default_stopwords_file_path=dummy_sw_path)
+    with patch("os.path.exists", return_value=True): # Ensure the path is "found" to trigger open attempt
+        npt = NLPlotLLM(prepare_data.copy(), target_col="text", default_stopwords_file_path=dummy_sw_path)
     assert npt.default_stopwords == []
     printed_warnings = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
-    assert f"Warning: Permission denied to read stopwords file {dummy_sw_path}" in printed_warnings
+    assert f"Warning: Permission denied to read stopwords file '{dummy_sw_path}'" in printed_warnings
 
 @patch("builtins.print")
 @patch("builtins.open", side_effect=IOError("Test IO error for reading stopwords"))
-def test_nlplot_init_stopwords_io_error(mock_open, mock_print, prepare_data, tmp_path):
+def test_nlplot_llm_init_stopwords_io_error(mock_open, mock_print, prepare_data, tmp_path):
     dummy_sw_path = str(tmp_path / "dummy_stopwords.txt")
-    with patch("os.path.exists", return_value=True):
-        npt = NLPlot(prepare_data.copy(), target_col="text", default_stopwords_file_path=dummy_sw_path)
+    with patch("os.path.exists", return_value=True): # Ensure the path is "found" to trigger open attempt
+        npt = NLPlotLLM(prepare_data.copy(), target_col="text", default_stopwords_file_path=dummy_sw_path)
     assert npt.default_stopwords == []
     printed_warnings = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
-    assert f"Warning: Could not read stopwords file {dummy_sw_path} due to an IO error" in printed_warnings
+    assert f"Warning: Could not read stopwords file '{dummy_sw_path}' due to an IO error" in printed_warnings
 
 
-def test_nlplot_init_with_malformed_text_column(prepare_data):
+def test_nlplot_llm_init_with_malformed_text_column(prepare_data):
     df_malformed = prepare_data.copy()
-    df_malformed.loc[0, "text"] = 12345
-    npt = NLPlot(df_malformed, target_col="text")
+    df_malformed.loc[0, "text"] = 12345 # type: ignore
+    npt = NLPlotLLM(df_malformed, target_col="text")
     assert isinstance(npt.df["text"].iloc[0], list)
     assert npt.df["text"].iloc[0] == ["12345"]
 
 @pytest.mark.parametrize("top_n, min_freq", [(1,0), (0,1), (0,0)])
-def test_nlplot_get_stopword(prepare_instance, top_n, min_freq):
+def test_nlplot_llm_get_stopword(prepare_instance, top_n, min_freq):
     npt = prepare_instance
     stopwords = npt.get_stopword(top_n=top_n, min_freq=min_freq)
     assert isinstance(stopwords, list)
@@ -229,7 +250,7 @@ def test_nlplot_get_stopword_invalid_params(prepare_instance, invalid_input):
 
 # --- Test Plotting Methods ---
 @patch("plotly.offline.plot")
-def test_nlplot_bar_ngram(mock_plotly_plot, prepare_instance):
+def test_nlplot_llm_bar_ngram(mock_plotly_plot, prepare_instance):
     npt = prepare_instance
     fig = npt.bar_ngram(title='uni-gram', ngram=1, top_n=5, save=True)
     assert isinstance(fig, plotly.graph_objs.Figure)
@@ -240,19 +261,20 @@ def test_nlplot_bar_ngram(mock_plotly_plot, prepare_instance):
 @patch("builtins.print")
 @patch("plotly.offline.plot", side_effect=PermissionError("Test permission error for plot"))
 @patch("os.makedirs")
-def test_save_plot_permission_error(mock_makedirs, mock_plotly_plot_err, mock_print, prepare_instance):
+def test_nlplot_llm_save_plot_permission_error(mock_makedirs, mock_plotly_plot_err, mock_print, prepare_instance):
     npt = prepare_instance
     fig = plotly.graph_objs.Figure()
-    with patch('nlplot.nlplot.datetime') as mock_datetime:
+    with patch('nlplot_llm.core.datetime') as mock_datetime: # Patched datetime used in NLPlotLLM's save_plot
         mock_datetime.datetime.now.return_value = datetime.datetime(2023, 1, 1, 12, 0, 0)
         npt.save_plot(fig, "test_plot_perm_error")
     printed_output = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
-    assert "Error: Permission denied to write to" in printed_output
+    assert "Error: Permission denied to write to" in printed_output # Message from save_plot
+    # The filename part of the message should also be checked if it's predictable
     assert "test_plot_perm_error.html. Please check directory permissions." in printed_output
 
 
 @patch("plotly.offline.plot")
-def test_nlplot_treemap(mock_plotly_plot, prepare_instance):
+def test_nlplot_llm_treemap(mock_plotly_plot, prepare_instance):
     npt = prepare_instance
     fig = npt.treemap(title='Tree Map', ngram=1, top_n=5, save=True)
     assert isinstance(fig, plotly.graph_objs.Figure)
@@ -261,7 +283,7 @@ def test_nlplot_treemap(mock_plotly_plot, prepare_instance):
     mock_plotly_plot.assert_called_once()
 
 @patch("plotly.offline.plot")
-def test_nlplot_word_distribution(mock_plotly_plot, prepare_instance):
+def test_nlplot_llm_word_distribution(mock_plotly_plot, prepare_instance):
     npt = prepare_instance
     fig = npt.word_distribution(title='Word Dist', save=True)
     assert isinstance(fig, plotly.graph_objs.Figure)
@@ -271,11 +293,16 @@ def test_nlplot_word_distribution(mock_plotly_plot, prepare_instance):
 
 @patch("IPython.display.display")
 @patch("PIL.Image.Image.save")
-@patch("nlplot.nlplot.DEFAULT_FONT_PATH", TTF_FONT_PATH) # Ensure test uses a known valid default path
-def test_nlplot_wordcloud_default_font(mock_pil_save, mock_ipython_display, prepare_instance):
-    npt = prepare_instance # This instance uses the default font path (TTF_FONT_PATH)
-    try:
+# DEFAULT_FONT_PATH is None now, so direct patching of its value is not the primary way to test default font behavior.
+# The wordcloud method itself will use None if no valid path is found.
+def test_nlplot_llm_wordcloud_no_font_specified_uses_wc_default(mock_pil_save, mock_ipython_display, prepare_instance):
+    npt = prepare_instance # npt.font_path should be None here due to DEFAULT_FONT_PATH = None
+    assert npt.font_path is None
+    with patch('builtins.print') as mock_print:
         npt.wordcloud(save=True)
+    # Expect a print message indicating that WordCloud will use its default.
+    printed_output = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
+    assert "Info: No valid font_path provided. WordCloud will attempt to use its default system font." in printed_output
     except Exception as e:
         pytest.fail(f"wordcloud with default font raised an exception: {e}")
     mock_ipython_display.assert_called_once()
@@ -288,75 +315,70 @@ def test_nlplot_wordcloud_default_font(mock_pil_save, mock_ipython_display, prep
 @patch("builtins.print")
 @patch("IPython.display.display")
 @patch("PIL.Image.Image.save")
-@patch("nlplot.nlplot.DEFAULT_FONT_PATH", TTF_FONT_PATH) # Valid default for fallback
-def test_nlplot_wordcloud_invalid_font_fallback_to_default(mock_pil_save, mock_display, mock_print, prepare_instance, tmp_path):
+# Test when a user-specified font path is invalid, it should try WordCloud's default.
+def test_nlplot_llm_wordcloud_invalid_font_uses_wc_default(mock_pil_save, mock_display, mock_print, prepare_instance):
     npt = prepare_instance
+    invalid_font_path = "completely_invalid_font_path.ttf" # This path does not exist
 
-    # Mock WordCloud constructor: first call (invalid font) raises OSError, second call (default font) succeeds
-    mock_wc_successful_instance = MagicMock()
-    mock_wc_successful_instance.generate = MagicMock()
-    mock_wc_successful_instance.to_array = MagicMock(return_value=np.array([[[0,0,0]]], dtype=np.uint8))
+    # Mock os.path.exists to return False for the invalid_font_path
+    # and True for any other path (like a potential system font WordCloud might try)
+    def mock_os_exists_logic(path):
+        if path == invalid_font_path:
+            return False
+        # For other paths, assume they might exist if WordCloud tries them (though we can't know which ones)
+        # Or, more simply for this test, just control the one we care about.
+        return os.path.exists(path) # Fallback to actual os.path.exists for other cases.
 
-    # This mock will be used for the nlplot.nlplot.WordCloud class
-    mock_wordcloud_class = MagicMock()
-    mock_wordcloud_class.side_effect = [
-        OSError("Simulated font error with custom_invalid_font.ttf"), # First attempt
-        mock_wc_successful_instance # Second attempt (fallback to default)
-    ]
+    # We expect WordCloud to be called with font_path=None after our logic determines invalid_font_path is bad.
+    mock_wc_instance = MagicMock()
+    mock_wc_instance.generate = MagicMock()
+    mock_wc_instance.to_array = MagicMock(return_value=np.array([[[0,0,0]]], dtype=np.uint8))
 
-    invalid_font_path = "custom_invalid_font.ttf" # Does not exist / is invalid
-
-    with patch("nlplot.nlplot.WordCloud", mock_wordcloud_class):
-        with patch("os.path.exists") as mock_os_exists:
-            # Setup os.path.exists:
-            # 1. custom_invalid_font.ttf -> True (pretend it exists but is invalid)
-            # 2. TTF_FONT_PATH (default) -> True (it should exist as per ensure_font_file_exists)
-            def side_effect_os_exists(path):
-                if path == invalid_font_path: return True
-                if path == TTF_FONT_PATH: return True
-                return os.path.exists(path) # original for other paths
-            mock_os_exists.side_effect = side_effect_os_exists
-
+    with patch("os.path.exists", side_effect=mock_os_exists_logic):
+        with patch("nlplot_llm.core.WordCloud", return_value=mock_wc_instance) as mock_wc_class:
             npt.wordcloud(font_path=invalid_font_path)
 
     printed_output = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
-    assert f"Warning: Error processing font at '{invalid_font_path}'" in printed_output
-    assert f"Attempting to fallback to default font: {TTF_FONT_PATH}" in printed_output
-    mock_wc_successful_instance.generate.assert_called_once() # Fallback was successful
+    assert f"Warning: Specified font_path '{invalid_font_path}' for wordcloud not found. Will attempt to use WordCloud default." in printed_output
+    assert "Info: No valid font_path provided. WordCloud will attempt to use its default system font." in printed_output
+
+    # Check that WordCloud was initialized with font_path=None
+    mock_wc_class.assert_called_once()
+    args, kwargs = mock_wc_class.call_args
+    assert kwargs.get('font_path') is None
     mock_display.assert_called_once()
 
 
 @patch("builtins.print")
 @patch("IPython.display.display")
-@patch("nlplot.nlplot.WordCloud") # Mock WordCloud class entirely for this
-@patch("nlplot.nlplot.DEFAULT_FONT_PATH", "truly_missing_default.ttf")
-@patch("os.path.exists")
-def test_nlplot_wordcloud_custom_font_fails_default_font_missing(mock_os_exists, mock_WordCloud_class, mock_display, mock_print, prepare_instance):
+@patch("nlplot_llm.core.WordCloud") # Mock WordCloud class entirely
+@patch("os.path.exists") # Mock os.path.exists
+def test_nlplot_llm_wordcloud_specified_font_fails_in_wc(mock_os_exists, mock_WordCloud_class, mock_display, mock_print, prepare_instance):
     npt = prepare_instance
 
-    invalid_custom_font = "another_invalid_font.ttf"
-    # os.path.exists: 1. invalid_custom_font (True), 2. truly_missing_default.ttf (False)
-    mock_os_exists.side_effect = lambda p: True if p == invalid_custom_font else (False if p == "truly_missing_default.ttf" else os.path.exists(p))
+    valid_looking_font_path = "valid_path_but_bad_font.ttf"
+    mock_os_exists.return_value = True # Pretend the font file exists at the path
 
-    # First WordCloud attempt (with invalid_custom_font) should raise OSError
-    mock_WordCloud_class.side_effect = OSError("Error with invalid_custom_font")
+    # Configure WordCloud to raise OSError when font_path is used,
+    # simulating a valid path but an unreadable/corrupt font file by WordCloud/FreeType.
+    mock_WordCloud_class.side_effect = OSError("Simulated FreeType error: cannot open resource")
 
-    npt.wordcloud(font_path=invalid_custom_font)
+    npt.wordcloud(font_path=valid_looking_font_path)
 
     printed_output = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
-    assert f"Warning: Error processing font at '{invalid_custom_font}'" in printed_output
-    assert f"Attempting to fallback to default font: truly_missing_default.ttf" in printed_output # Tries to fallback
-    assert "Error: Default font not found at 'truly_missing_default.ttf' and custom font failed." in printed_output
-    mock_display.assert_not_called() # Should not display anything
+    # Check for the error message from the wordcloud method's except OSError block
+    assert "Error during WordCloud generation (possibly font-related): Simulated FreeType error" in printed_output
+    assert f"If a font_path was specified ('{valid_looking_font_path}'), check its validity." in printed_output
+    mock_display.assert_not_called() # Should not display if WordCloud instantiation fails
 
 
 @patch("builtins.print")
 @patch("PIL.Image.open", side_effect=PermissionError("Test permission error for mask"))
 @patch("IPython.display.display")
-def test_nlplot_wordcloud_mask_permission_error(mock_display, mock_pil_open_err, mock_print, prepare_instance):
+def test_nlplot_llm_wordcloud_mask_permission_error(mock_display, mock_pil_open_err, mock_print, prepare_instance):
     npt = prepare_instance
     dummy_mask_path = "dummy_mask.png"
-    with patch("os.path.exists", return_value=True):
+    with patch("os.path.exists", return_value=True): # Assume mask file path "exists"
         npt.wordcloud(mask_file=dummy_mask_path)
     printed_warnings = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
     assert f"Warning: Permission denied to read mask file {dummy_mask_path}" in printed_warnings
@@ -364,7 +386,7 @@ def test_nlplot_wordcloud_mask_permission_error(mock_display, mock_pil_open_err,
 
 @patch("plotly.offline.iplot")
 @patch("plotly.offline.plot")
-def test_nlplot_co_network(mock_plotly_plot, mock_iplot, prepare_instance):
+def test_nlplot_llm_co_network(mock_plotly_plot, mock_iplot, prepare_instance):
     npt = prepare_instance
     npt.build_graph(min_edge_frequency=0)
     assert hasattr(npt, 'G')
@@ -373,14 +395,14 @@ def test_nlplot_co_network(mock_plotly_plot, mock_iplot, prepare_instance):
         mock_iplot.assert_called_once()
         mock_plotly_plot.assert_called_once()
     else:
-        with patch('builtins.print') as mock_print:
+        with patch('builtins.print') as mock_print_inner: # Use a different mock name to avoid conflict
             npt.co_network(title='Co-occurrence')
-            printed_output = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
+            printed_output = "".join(call.args[0] for call in mock_print_inner.call_args_list if call.args)
             assert "Graph not built or empty" in printed_output or "Node DataFrame not available or empty" in printed_output
 
 
 @patch("plotly.offline.plot")
-def test_nlplot_sunburst(mock_plotly_plot, prepare_instance):
+def test_nlplot_llm_sunburst(mock_plotly_plot, prepare_instance):
     npt = prepare_instance
     npt.build_graph(min_edge_frequency=0)
     if not npt.node_df.empty:
@@ -388,37 +410,37 @@ def test_nlplot_sunburst(mock_plotly_plot, prepare_instance):
         assert isinstance(fig, plotly.graph_objs.Figure)
         mock_plotly_plot.assert_called_once()
     else:
-        with patch('builtins.print') as mock_print:
+        with patch('builtins.print') as mock_print_inner:
             fig = npt.sunburst(title='Sunburst')
-            printed_output = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
+            printed_output = "".join(call.args[0] for call in mock_print_inner.call_args_list if call.args)
             assert "Node DataFrame not available or empty" in printed_output
-            assert isinstance(fig, plotly.graph_objs.Figure)
+            assert isinstance(fig, plotly.graph_objs.Figure) # Should still return an empty figure
 
 
 @patch("builtins.print")
 @patch("pandas.DataFrame.to_csv", side_effect=PermissionError("Test permission error for CSV save"))
 @patch("os.makedirs")
-def test_save_tables_permission_error(mock_makedirs, mock_to_csv_err, mock_print, prepare_instance):
+def test_nlplot_llm_save_tables_permission_error(mock_makedirs, mock_to_csv_err, mock_print, prepare_instance):
     npt = prepare_instance
     npt.node_df = pd.DataFrame({'id': ['node1']})
     npt.edge_df = pd.DataFrame({'source': ['node1']})
     npt.save_tables(prefix="test_save_perm_error")
     printed_output = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
-    assert f"Error: Permission denied to write tables in {npt.output_file_path}" in printed_output
+    assert f"Error: Permission denied to write tables in '{npt.output_file_path}'" in printed_output
 
 
 # --- Tests for empty or problematic data ---
 @patch("plotly.offline.plot")
-def test_nlplot_bar_ngram_empty_df(mock_plotly_plot, prepare_instance_empty_df):
+def test_nlplot_llm_bar_ngram_empty_df(mock_plotly_plot, prepare_instance_empty_df):
     npt = prepare_instance_empty_df
     with patch('builtins.print') as mock_print:
         fig = npt.bar_ngram(title='uni-gram', ngram=1, top_n=5)
-        assert isinstance(fig, plotly.graph_objs.Figure)
+        assert isinstance(fig, plotly.graph_objs.Figure) # Should return empty figure
         printed_output = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
         assert "No data to plot for bar_ngram" in printed_output
 
 
-def test_nlplot_build_graph_empty_df(prepare_instance_empty_df):
+def test_nlplot_llm_build_graph_empty_df(prepare_instance_empty_df):
     npt = prepare_instance_empty_df
     with patch('builtins.print') as mock_print:
         npt.build_graph()
@@ -427,7 +449,7 @@ def test_nlplot_build_graph_empty_df(prepare_instance_empty_df):
         assert npt.node_df.empty
 
 
-def test_nlplot_init_data_with_empty_text(data_with_empty_text, tmp_path):
+def test_nlplot_llm_init_data_with_empty_text(data_with_empty_text, tmp_path):
     output_dir = tmp_path / "empty_text_outputs"
     npt = NLPlot(data_with_empty_text, target_col="text", output_file_path=str(output_dir))
     assert isinstance(npt.df["text"].iloc[0], list)
@@ -607,13 +629,13 @@ def test_tokenize_japanese_text(prepare_instance):
     assert npt._tokenize_japanese_text("") == [], "Empty string should return empty list."
     assert npt._tokenize_japanese_text("   ") == [], "Whitespace-only string should return empty list."
     # Test with non-string input (current implementation returns empty list)
-    assert npt._tokenize_japanese_text(None) == [], "None input should return empty list." # type: ignore
-    assert npt._tokenize_japanese_text(123) == [], "Integer input should return empty list."   # type: ignore
+    assert npt._tokenize_japanese_text(None) == [], "None input should return empty list." # type: ignore # type: ignore
+    assert npt._tokenize_japanese_text(123) == [], "Integer input should return empty list."   # type: ignore # type: ignore
 
 
-@patch("nlplot.nlplot.JANOME_AVAILABLE", False)
+@patch("nlplot_llm.core.JANOME_AVAILABLE", False)
 @patch("builtins.print")
-def test_tokenize_japanese_text_janome_not_available(mock_print, prepare_instance):
+def test_nlplot_llm_tokenize_japanese_text_janome_not_available(mock_print, prepare_instance):
     npt = prepare_instance
     text = "テスト"
     tokens = npt._tokenize_japanese_text(text)
@@ -621,17 +643,22 @@ def test_tokenize_japanese_text_janome_not_available(mock_print, prepare_instanc
     mock_print.assert_any_call("Warning: Janome is not installed. Japanese tokenization is not available. Please install Janome (e.g., pip install janome).")
 
 
-@patch.object(nlplot.nlplot.JanomeTokenizer, 'tokenize', side_effect=Exception("Simulated Janome Error"))
+@patch("nlplot_llm.core.JanomeTokenizer.tokenize", side_effect=Exception("Simulated Janome Error")) # Note patch target change
 @patch("builtins.print")
-def test_tokenize_japanese_text_janome_tokenization_error(mock_print, mock_tokenize_method, prepare_instance):
+def test_nlplot_llm_tokenize_japanese_text_janome_tokenization_error(mock_print, mock_tokenize_method, prepare_instance):
     # This test assumes JANOME_AVAILABLE is True, but the tokenize call itself fails
-    if not nlplot.nlplot.JANOME_AVAILABLE:
+    if not nlplot_llm.core.JANOME_AVAILABLE: # Check the flag from the nlplot_llm.core module
         pytest.skip("Janome not installed, cannot test tokenization error scenario.")
 
     npt = prepare_instance
     # Ensure tokenizer is initialized for the test to reach the tokenize call
-    if npt._janome_tokenizer is None:
-        npt._janome_tokenizer = nlplot.nlplot.JanomeTokenizer() # Re-init if it was None due to prior test mocks
+    if npt._janome_tokenizer is None and nlplot_llm.core.JANOME_AVAILABLE : # Check again if it could be initialized
+        from nlplot_llm.core import JanomeTokenizer as ActualJanomeTokenizer # Import directly for re-init
+        try:
+            npt._janome_tokenizer = ActualJanomeTokenizer()
+        except Exception:
+             pytest.skip("Could not re-initialize Janome Tokenizer for test.")
+
 
     text = "エラーを起こすテキスト"
     tokens = npt._tokenize_japanese_text(text)
@@ -640,16 +667,24 @@ def test_tokenize_japanese_text_janome_tokenization_error(mock_print, mock_token
 
 
 # Test for get_japanese_text_features (replaces _initial version)
-def test_get_japanese_text_features(prepare_instance):
+def test_nlplot_llm_get_japanese_text_features(prepare_instance):
     """
     (Green/Refactor Phase for TDD Cycle 2)
     Tests that get_japanese_text_features method calculates features correctly.
     """
     npt = prepare_instance
-    if not nlplot.nlplot.JANOME_AVAILABLE:
+    if not nlplot_llm.core.JANOME_AVAILABLE:
         pytest.skip("Janome not installed, skipping japanese text features test.")
-    if npt._janome_tokenizer is None:
-         pytest.skip("Janome tokenizer not initialized in NLPlot instance, skipping japanese text features test.")
+    if npt._janome_tokenizer is None and nlplot_llm.core.JANOME_AVAILABLE: # Check again
+         # Try to re-initialize if it was None due to module-level mocks in other tests
+        from nlplot_llm.core import JanomeTokenizer as ActualJanomeTokenizer
+        try:
+            npt._janome_tokenizer = ActualJanomeTokenizer()
+            if npt._janome_tokenizer is None: # Still None after attempt
+                 pytest.skip("Janome tokenizer could not be initialized in NLPlotLLM instance.")
+        except Exception:
+            pytest.skip("Janome tokenizer failed to initialize during test setup.")
+
 
     sample_texts = pd.Series([
         "猫が窓から顔を出した。",             # text1
@@ -834,16 +869,24 @@ def test_plot_japanese_text_features_initial(prepare_instance):
     pass
 
 # Green/Refactor Phase for plotting (replaces _initial version)
-def test_plot_japanese_text_features(prepare_instance):
+def test_nlplot_llm_plot_japanese_text_features(prepare_instance):
     """
     (Green/Refactor Phase for TDD Cycle 3 - Optional Plotting Feature)
     Tests that plot_japanese_text_features method generates plots correctly.
     """
     npt = prepare_instance
-    if not nlplot.nlplot.JANOME_AVAILABLE:
+    if not nlplot_llm.core.JANOME_AVAILABLE: # Updated path to JANOME_AVAILABLE
         pytest.skip("Janome not installed, skipping plot_japanese_text_features test as it relies on features_df.")
-    if npt._janome_tokenizer is None:
-         pytest.skip("Janome tokenizer not initialized, skipping plot_japanese_text_features test.")
+    if npt._janome_tokenizer is None and nlplot_llm.core.JANOME_AVAILABLE: # Check again
+         # Try to re-initialize if it was None due to module-level mocks in other tests
+        from nlplot_llm.core import JanomeTokenizer as ActualJanomeTokenizer
+        try:
+            npt._janome_tokenizer = ActualJanomeTokenizer()
+            if npt._janome_tokenizer is None: # Still None after attempt
+                 pytest.skip("Janome tokenizer could not be initialized in NLPlotLLM instance.")
+        except Exception:
+            pytest.skip("Janome tokenizer failed to initialize during test setup for plotting.")
+
 
     # Generate actual features_df using the existing method
     sample_texts = pd.Series([

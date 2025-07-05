@@ -14,9 +14,9 @@ def read_requirements():
 
 
 setup(
-    name='nlplot',
-    version='1.5.0',
-    description='Visualization Module for Natural Language Processing',
+    name='nlplot_llm',
+    version='0.1.0',
+    description='Visualization Module for Natural Language Processing with LLM capabilities',
     long_description=long_description,
     long_description_content_type='text/markdown',
     author='Takanobu Nozawa',

@@ -10,7 +10,8 @@ networkx
 ipython
 scikit-learn
 janome
-langchain
-langchain-openai
-langchain-community
-openai
+litellm
+# langchain
+# langchain-openai
+# langchain-community
+# openai

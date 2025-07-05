@@ -1,42 +1,60 @@
 import streamlit as st
 import pandas as pd
-from nlplot import NLPlot # Assuming nlplot is installed or in PYTHONPATH
+import os # Added for os.getenv
+from nlplot_llm import NLPlotLLM # Updated import
 
 # --- App Configuration ---
-st.set_page_config(page_title="NLPlot LLM Demo", layout="wide")
+st.set_page_config(page_title="NLPlotLLM Demo", layout="wide") # Updated title
 
 # --- Helper Functions (placeholder for now) ---
-def get_nlplot_instance():
-    """Creates and returns an NLPlot instance."""
-    # For the demo, we might not need a DataFrame for NLPlot initialization
+def get_nlplot_llm_instance(): # Updated function name
+    """Creates and returns an NLPlotLLM instance.""" # Updated class name in docstring
+    # For the demo, we might not need a DataFrame for NLPlotLLM initialization
     # if we are only using LLM methods that take Series directly.
-    # However, NLPlot requires a df and target_col for its constructor.
+    # However, NLPlotLLM requires a df and target_col for its constructor.
     # We can use a dummy one.
-    dummy_df = pd.DataFrame({'text': ["dummy text for nlplot init"]})
-    return NLPlot(dummy_df, target_col='text')
+    dummy_df = pd.DataFrame({'text': ["dummy text for nlplot_llm init"]}) # Updated init text
+    return NLPlotLLM(dummy_df, target_col='text') # Updated class name
 
 # --- Sidebar for LLM Configuration ---
-st.sidebar.header("LLM Configuration")
-llm_provider = st.sidebar.selectbox("LLM Provider", ["OpenAI", "Ollama"], index=0)
-model_name = st.sidebar.text_input("Model Name", value="gpt-3.5-turbo" if llm_provider == "OpenAI" else "llama2")
+st.sidebar.header("LLM Configuration (LiteLLM)")
 
-llm_config = {}
-if llm_provider == "OpenAI":
-    openai_api_key = st.sidebar.text_input("OpenAI API Key", type="password")
-    if openai_api_key:
-        llm_config["openai_api_key"] = openai_api_key
-    else:
-        st.sidebar.warning("OpenAI API Key is required.")
-elif llm_provider == "Ollama":
-    base_url = st.sidebar.text_input("Ollama Base URL", value="http://localhost:11434")
-    llm_config["base_url"] = base_url
+# Model string input
+model_string = st.sidebar.text_input(
+    "LiteLLM Model String",
+    value="openai/gpt-3.5-turbo",
+    help="e.g., `openai/gpt-3.5-turbo`, `ollama/llama2`, `azure/your-deployment-name`"
+)
 
+# Common LiteLLM parameters
 temperature = st.sidebar.slider("Temperature", min_value=0.0, max_value=2.0, value=0.0, step=0.1)
-llm_config["temperature"] = temperature
+
+# Optional API Key / Base URL (LiteLLM often reads from env vars)
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Optional Overrides (if not using environment variables):**")
+api_key_input = st.sidebar.text_input("API Key (e.g., OpenAI, Azure)", type="password", help="Sets `api_key` for LiteLLM.")
+api_base_input = st.sidebar.text_input("API Base URL (e.g., Ollama, custom OpenAI-compatible)", help="Sets `api_base` for LiteLLM.")
+
+# Prepare litellm_kwargs
+litellm_kwargs = {}
+litellm_kwargs["temperature"] = temperature
+if api_key_input:
+    litellm_kwargs["api_key"] = api_key_input
+if api_base_input:
+    litellm_kwargs["api_base"] = api_base_input
+
+# Check for OpenAI key specifically if OpenAI model is chosen, for user guidance
+# This is a bit of a heuristic as LiteLLM handles it, but good for UX.
+openai_key_needed_for_model = False
+if "openai/" in model_string or (model_string.startswith("gpt-") and "/" not in model_string): # Simple check
+    openai_key_needed_for_model = True
+    if not api_key_input and not os.getenv("OPENAI_API_KEY"):
+        st.sidebar.warning("OpenAI model selected. Ensure OPENAI_API_KEY is set as an environment variable or provided above.")
+
 
 
 # --- Main App Area ---
-st.title("NLPlot LLM Functions Demo")
+st.title("NLPlotLLM Functions Demo") # Updated title
 
 # Input Text Area
 st.header("Input Text")
@@ -91,17 +109,19 @@ elif analysis_type == "Text Summarization":
 if st.button(f"Run {analysis_type}"):
     if not input_text.strip():
         st.error("Please enter some text to analyze.")
-    elif llm_provider == "OpenAI" and not openai_api_key:
-        st.error("OpenAI API Key is required to run the analysis.")
+    elif not model_string.strip():
+        st.error("Please enter a LiteLLM Model String.")
+    # Removed specific OpenAI key check here as LiteLLM handles various auth methods.
+    # The warning in the sidebar should guide the user.
     else:
         lines = [line.strip() for line in input_text.split('\n') if line.strip()]
         if not lines:
             st.error("No valid text lines found after stripping.")
         else:
             text_series = pd.Series(lines)
-            npt = get_nlplot_instance()
+            npt = get_nlplot_llm_instance()
 
-            st.info(f"Processing {len(text_series)} text document(s) using {llm_provider} ({model_name})...")
+            st.info(f"Processing {len(text_series)} text document(s) using model: {model_string}...")
 
             try:
                 with st.spinner("Analyzing..."):
@@ -109,9 +129,8 @@ if st.button(f"Run {analysis_type}"):
                         st.subheader("Sentiment Analysis Results")
                         result_df = npt.analyze_sentiment_llm(
                             text_series=text_series,
-                            llm_provider=llm_provider.lower(),
-                            model_name=model_name,
-                            **llm_config
+                            model=model_string, # Use the LiteLLM model string
+                            **litellm_kwargs # Pass all collected LiteLLM kwargs
                         )
                         st.dataframe(result_df)
 
@@ -127,36 +146,34 @@ if st.button(f"Run {analysis_type}"):
                                 result_df = npt.categorize_text_llm(
                                     text_series=text_series,
                                     categories=categories_list,
-                                    llm_provider=llm_provider.lower(),
-                                    model_name=model_name,
+                                    model=model_string, # Use the LiteLLM model string
                                     multi_label=multi_label_categories,
-                                    **llm_config
+                                    **litellm_kwargs # Pass all collected LiteLLM kwargs
                                 )
                                 st.dataframe(result_df)
 
                     elif analysis_type == "Text Summarization":
                         st.subheader("Text Summarization Results")
 
-                        summarize_kwargs = {
-                            "llm_provider": llm_provider.lower(),
-                            "model_name": model_name,
-                            "use_chunking": use_chunking_summarize,
-                            **llm_config
-                        }
+                        # Start with base litellm_kwargs
+                        summarize_final_kwargs = litellm_kwargs.copy()
+                        summarize_final_kwargs["use_chunking"] = use_chunking_summarize
+
                         if use_chunking_summarize:
-                            summarize_kwargs["chunk_size"] = chunk_size_summarize
-                            summarize_kwargs["chunk_overlap"] = chunk_overlap_summarize
+                            summarize_final_kwargs["chunk_size"] = chunk_size_summarize
+                            summarize_final_kwargs["chunk_overlap"] = chunk_overlap_summarize
                             if chunk_prompt_template_summarize.strip():
-                                summarize_kwargs["chunk_prompt_template_str"] = chunk_prompt_template_summarize
+                                summarize_final_kwargs["chunk_prompt_template_str"] = chunk_prompt_template_summarize
                             if combine_prompt_template_summarize.strip():
-                                summarize_kwargs["combine_prompt_template_str"] = combine_prompt_template_summarize
-                        else: # Direct summarization (not using chunking specific prompts)
-                            if chunk_prompt_template_summarize.strip(): # Re-using this field for direct prompt
-                                summarize_kwargs["prompt_template_str"] = chunk_prompt_template_summarize
+                                summarize_final_kwargs["combine_prompt_template_str"] = combine_prompt_template_summarize
+                        else:
+                            if chunk_prompt_template_summarize.strip(): # This UI field is reused for direct prompt
+                                summarize_final_kwargs["prompt_template_str"] = chunk_prompt_template_summarize
 
                         result_df = npt.summarize_text_llm(
                             text_series=text_series,
-                            **summarize_kwargs
+                            model=model_string, # Use the LiteLLM model string
+                            **summarize_final_kwargs
                         )
                         st.dataframe(result_df)
 
@@ -167,21 +184,21 @@ if st.button(f"Run {analysis_type}"):
             except Exception as e:
                 st.error(f"An unexpected error occurred: {e}")
 else:
-    st.caption("Click the 'Analyze Text' button to start.")
+    st.caption(f"Click the 'Run {analysis_type}' button to start.") # Dynamic button text in caption
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("Powered by [NLPlot](https://github.com/your-repo/nlplot) and Streamlit.") # Replace with actual repo link if available
-st.sidebar.markdown("Ensure your LLM (OpenAI API or Ollama server) is configured and accessible.")
+st.sidebar.markdown("Powered by NLPlotLLM and Streamlit.") # Updated name
+st.sidebar.markdown("Ensure your LLM (OpenAI API, Ollama server, etc.) is configured and accessible as per LiteLLM requirements.") # Updated guidance
 
 # To run this app:
-# 1. Ensure nlplot, streamlit, langchain, openai, langchain-community are installed.
-#    pip install streamlit pandas nlplot langchain openai langchain-community
+# 1. Ensure nlplot_llm, streamlit, pandas, litellm are installed.
+#    pip install streamlit pandas litellm # nlplot_llm from local setup
 # 2. Save this code as streamlit_app.py
 # 3. Run `streamlit run streamlit_app.py` from your terminal.
 #
-# Note: The NLPlot library itself would need to be installed (e.g., editable install `pip install -e .`)
+# Note: The NLPlotLLM library itself would need to be installed (e.g., editable install `pip install -e .`)
 # or its path added to PYTHONPATH for the import to work correctly if running from a different directory.
-# For simplicity, this assumes `nlplot` is importable.
+# For simplicity, this assumes `nlplot_llm` is importable.
 #
 # Example texts:
 # Sentiment:

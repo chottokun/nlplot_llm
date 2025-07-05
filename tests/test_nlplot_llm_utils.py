@@ -3,16 +3,16 @@ import os
 import pandas as pd
 from unittest.mock import patch, MagicMock
 
-from nlplot import NLPlot # Assuming NLPlot class is in nlplot/__init__.py or nlplot/nlplot.py
+from nlplot_llm import NLPlotLLM # Updated import
 
 # Attempt to import Langchain components for type checking and direct use in tests if needed.
 try:
-    from nlplot.nlplot import LANGCHAIN_AVAILABLE as MODULE_LANGCHAIN_AVAILABLE
+    from nlplot_llm.core import LANGCHAIN_AVAILABLE as MODULE_LANGCHAIN_AVAILABLE # Updated path
     from langchain_text_splitters import RecursiveCharacterTextSplitter, CharacterTextSplitter
     # Add other splitters if they will be tested directly or type-hinted.
     LANGCHAIN_SPLITTERS_AVAILABLE_FOR_TEST = True
 except ImportError:
-    MODULE_LANGCHAIN_AVAILABLE = False # Fallback if flag not found in nlplot.nlplot
+    MODULE_LANGCHAIN_AVAILABLE = False # Fallback if flag not found in nlplot_llm.core
     LANGCHAIN_SPLITTERS_AVAILABLE_FOR_TEST = False
     # Dummy classes for type hints if Langchain components are not installed in test environment
     class RecursiveCharacterTextSplitter:
@@ -26,24 +26,27 @@ except ImportError:
 
 @pytest.fixture
 def npt_llm_utils_instance(tmp_path):
-    """Provides a basic NLPlot instance for LLM utility tests."""
+    """Provides a basic NLPlotLLM instance for LLM utility tests.""" # Updated class name
     df = pd.DataFrame({'text': ["initial setup text for utils"]})
     output_dir = tmp_path / "llm_utils_test_outputs"
     os.makedirs(output_dir, exist_ok=True)
-    return NLPlot(df, target_col='text', output_file_path=str(output_dir))
+    return NLPlotLLM(df, target_col='text', output_file_path=str(output_dir)) # Updated class name
 
 # --- TDD for Text Chunking (Cycle 4) ---
+# This file's tests are currently valid as _chunk_text itself doesn't directly use LiteLLM,
+# but relies on Langchain's text splitters. If those imports change, these might need updates.
+# For now, just updating class names and patch targets.
 
 def test_chunk_text_initial_method_missing(npt_llm_utils_instance):
     """(Red Phase) Ensure _chunk_text method is initially missing."""
-    with pytest.raises(AttributeError, match="'NLPlot' object has no attribute '_chunk_text'"):
+    with pytest.raises(AttributeError, match="'NLPlotLLM' object has no attribute '_chunk_text'"): # Updated class name
         npt_llm_utils_instance._chunk_text("some long text that needs chunking")
 
 # The tests below are for the Green/Refactor phase, once _chunk_text is implemented.
-# They assume 'nlplot.nlplot.RecursiveCharacterTextSplitter' etc. will be valid patch targets.
+# They assume 'nlplot_llm.core.RecursiveCharacterTextSplitter' etc. will be valid patch targets.
 
-@pytest.mark.skipif(not MODULE_LANGCHAIN_AVAILABLE or not LANGCHAIN_SPLITTERS_AVAILABLE_FOR_TEST, reason="Langchain text splitters not available in nlplot or test env.")
-@patch('nlplot.nlplot.RecursiveCharacterTextSplitter')
+@pytest.mark.skipif(not MODULE_LANGCHAIN_AVAILABLE or not LANGCHAIN_SPLITTERS_AVAILABLE_FOR_TEST, reason="Langchain text splitters not available in nlplot_llm.core or test env.")
+@patch('nlplot_llm.core.RecursiveCharacterTextSplitter') # Updated patch target
 def test_chunk_text_recursive_char_mocked(MockRecursiveSplitter, npt_llm_utils_instance):
     npt = npt_llm_utils_instance
     mock_splitter_instance = MockRecursiveSplitter.return_value
@@ -73,8 +76,8 @@ def test_chunk_text_recursive_char_mocked(MockRecursiveSplitter, npt_llm_utils_i
         assert chunks == expected_chunks
     except AttributeError:
         pytest.fail("_chunk_text method not found. This test should run after method stub is added.")
-    except ImportError: # If RecursiveCharacterTextSplitter is not importable via nlplot.nlplot
-        pytest.skip("RecursiveCharacterTextSplitter not found in nlplot.nlplot for patching.")
+    except ImportError: # If RecursiveCharacterTextSplitter is not importable via nlplot_llm.core
+        pytest.skip("RecursiveCharacterTextSplitter not found in nlplot_llm.core for patching.")
 
 
 @pytest.mark.skipif(not MODULE_LANGCHAIN_AVAILABLE or not LANGCHAIN_SPLITTERS_AVAILABLE_FOR_TEST, reason="Langchain text splitters not available.")
@@ -113,7 +116,7 @@ def test_chunk_text_unsupported_strategy(npt_llm_utils_instance):
         pytest.fail("_chunk_text method not found.")
 
 @pytest.mark.skipif(not MODULE_LANGCHAIN_AVAILABLE or not LANGCHAIN_SPLITTERS_AVAILABLE_FOR_TEST, reason="Langchain text splitters not available.")
-@patch('nlplot.nlplot.CharacterTextSplitter')
+@patch('nlplot_llm.core.CharacterTextSplitter') # Updated patch target
 def test_chunk_text_character_strategy_mocked(MockCharacterSplitter, npt_llm_utils_instance):
     npt = npt_llm_utils_instance
     mock_splitter_instance = MockCharacterSplitter.return_value
@@ -144,7 +147,7 @@ def test_chunk_text_character_strategy_mocked(MockCharacterSplitter, npt_llm_uti
     except AttributeError:
         pytest.fail("_chunk_text method not found.")
     except ImportError:
-        pytest.skip("CharacterTextSplitter not found in nlplot.nlplot for patching.")
+        pytest.skip("CharacterTextSplitter not found in nlplot_llm.core for patching.")
 
 # Further tests could include:
 # - Different chunk_size and chunk_overlap values.
