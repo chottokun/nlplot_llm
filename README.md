@@ -212,26 +212,26 @@ sentiment_texts = pd.Series([
 try:
     sentiment_df_openai = npt.analyze_sentiment_llm(
         text_series=sentiment_texts,
-        model="openai/gpt-3.5-turbo", # LiteLLM model string
+        model="openai/gpt-4o", # Using a newer OpenAI model
         # litellm_kwargs can be used to pass provider-specific params, e.g., api_key
         # litellm_kwargs={"api_key": "YOUR_OPENAI_KEY"}
     )
-    print("\\nSentiment Analysis Results (OpenAI via LiteLLM):")
+    print("\\nSentiment Analysis Results (OpenAI gpt-4o via LiteLLM):")
     print(sentiment_df_openai)
 except Exception as e:
     print(f"OpenAI sentiment analysis example failed: {e}")
 
 # Example with an Ollama model and custom prompt via LiteLLM
-# Ensure Ollama server is running (e.g., `ollama serve`) and the model is pulled (e.g., `ollama pull mistral`).
+# Ensure Ollama server is running (e.g., `ollama serve`) and the model is pulled (e.g., `ollama pull gemma`).
 custom_sentiment_prompt = "Given the text, is the author happy, sad, or neutral? Return one word. Text: {text}"
 try:
     sentiment_df_ollama_custom = npt.analyze_sentiment_llm(
         text_series=sentiment_texts,
-        model="ollama/mistral", # Or your preferred Ollama model
+        model="ollama/gemma", # Using a newer Ollama model
         prompt_template_str=custom_sentiment_prompt,
         litellm_kwargs={"api_base": "http://localhost:11434", "temperature": 0.2} # Specify API base if not default
     )
-    print("\\nSentiment Analysis Results (Ollama with custom prompt via LiteLLM):")
+    print("\\nSentiment Analysis Results (Ollama gemma with custom prompt via LiteLLM):")
     print(sentiment_df_ollama_custom)
 except Exception as e:
     print(f"Ollama sentiment analysis example failed: {e}")
@@ -255,24 +255,24 @@ try:
     cat_single_df = npt.categorize_text_llm(
         text_series=texts_for_categorization,
         categories=defined_categories,
-        model="openai/gpt-3.5-turbo",
+        model="openai/gpt-4o", # Using a newer OpenAI model
         prompt_template_str=custom_categorize_prompt_single,
         multi_label=False,
         # litellm_kwargs={"api_key": "YOUR_OPENAI_KEY"}
     )
-    print("\\nSingle-label Categorization Results (OpenAI with custom prompt):")
+    print("\\nSingle-label Categorization Results (OpenAI gpt-4o with custom prompt):")
     print(cat_single_df)
 
     # Multi-label categorization with an Ollama model
     cat_multi_df = npt.categorize_text_llm(
         text_series=texts_for_categorization,
         categories=defined_categories,
-        model="ollama/mistral",
+        model="ollama/gemma", # Using a newer Ollama model
         prompt_template_str=custom_categorize_prompt_multi, # Using the custom multi-label prompt
         multi_label=True,
         litellm_kwargs={"temperature": 0.1}
     )
-    print("\\nMulti-label Categorization Results (Ollama via LiteLLM):")
+    print("\\nMulti-label Categorization Results (Ollama gemma via LiteLLM):")
     print(cat_multi_df)
 except Exception as e:
     print(f"LLM categorization example failed: {e}")
@@ -293,14 +293,14 @@ try:
     # Summarization with chunking, custom prompts, using an OpenAI model
     summaries_df = npt.summarize_text_llm(
         text_series=long_text_series,
-        model="openai/gpt-3.5-turbo",
+        model="openai/gpt-4o", # Using a newer OpenAI model
         chunk_prompt_template_str=custom_chunk_prompt,
         combine_prompt_template_str=custom_combine_prompt,
         # litellm_kwargs={"api_key": "YOUR_OPENAI_KEY", "max_tokens": 150},
         chunk_size=1000,
         chunk_overlap=100
     )
-    print("\\nLLM Text Summarization Results (OpenAI, Chunked, Custom Prompts):")
+    print("\\nLLM Text Summarization Results (OpenAI gpt-4o, Chunked, Custom Prompts):")
     print(summaries_df)
 
     # Example of direct summarization (no chunking) with an Ollama model
@@ -308,12 +308,12 @@ try:
     direct_summary_prompt = "Provide a one-sentence summary of: {text}"
     short_summary_df = npt.summarize_text_llm(
         text_series=short_text_series,
-        model="ollama/mistral",
+        model="ollama/gemma", # Using a newer Ollama model
         use_chunking=False,
         prompt_template_str=direct_summary_prompt,
         litellm_kwargs={"temperature": 0.0}
     )
-    print("\\nLLM Short Text Summarization (Ollama, No Chunking, Custom Prompt):")
+    print("\\nLLM Short Text Summarization (Ollama gemma, No Chunking, Custom Prompt):")
     print(short_summary_df)
 
 except Exception as e:
