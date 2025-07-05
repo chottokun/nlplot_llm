@@ -6,10 +6,13 @@ nlplot: Analysis and visualization module for Natural Language Processing 📈
 - Word count histograms and word clouds
 - Co-occurrence networks and sunburst charts
 - **New:** Japanese text analysis (token counts, POS ratios) using Janome.
-- **New (Experimental):** LLM-powered sentiment analysis and text categorization using Langchain, supporting providers like OpenAI and Ollama.
+- **New (Experimental):** LLM-powered text analysis using [Langchain](https://python.langchain.com/), supporting providers like OpenAI and Ollama for:
+    - Sentiment Analysis
+    - Text Categorization (single and multi-label)
+    - Text Chunking (via internal helper methods, useful for preprocessing long texts for LLMs)
 
 ## Description
-Facilitates the visualization of natural language processing and provides quicker analysis
+Facilitates the visualization of natural language processing and provides quicker analysis. Now with experimental LLM capabilities for advanced text understanding.
 
 You can draw the following graph
 
@@ -255,6 +258,74 @@ if nlplot.nlplot.LANGCHAIN_AVAILABLE:
 else:
     print("Langchain support is not available. Skipping LLM categorization examples.")
 ```
+
+### LLM Text Summarization
+Generate concise summaries of your texts. Supports chunking for long documents.
+```python
+# Assuming npt_llm is an NLPlot instance
+long_text_series = pd.Series([
+    "This is the first long document. It contains multiple sentences and discusses various topics that need to be condensed into a short summary. The goal is to capture the main essence of this text efficiently.",
+    "Another document here, also quite lengthy. It explores different ideas and presents several arguments. Summarizing this will help in quick understanding. It talks about AI, programming, and the future of technology."
+])
+
+if nlplot.nlplot.LANGCHAIN_AVAILABLE:
+    try:
+        # Summarization with chunking (default)
+        summaries_df = npt_llm.summarize_text_llm(
+            text_series=long_text_series,
+            llm_provider="openai", # or "ollama"
+            model_name="gpt-3.5-turbo", # replace with your model
+            # openai_api_key="your_key" # if not in env
+            # chunk_size=1000, # Default
+            # chunk_overlap=100, # Default
+            # chunk_prompt_template_str="Summarize this: {text}", # Optional
+            # combine_prompt_template_str="Combine these summaries: {text}" # Optional
+        )
+        print("\\nLLM Text Summarization Results:")
+        print(summaries_df)
+
+        # Example of direct summarization without chunking for shorter texts
+        short_text_series = pd.Series(["A very short text to summarize directly."])
+        short_summary_df = npt_llm.summarize_text_llm(
+            text_series=short_text_series,
+            llm_provider="openai",
+            model_name="gpt-3.5-turbo",
+            use_chunking=False
+        )
+        print("\\nLLM Short Text Summarization (No Chunking):")
+        print(short_summary_df)
+
+    except Exception as e:
+        print(f"LLM summarization example failed: {e}")
+else:
+    print("Langchain support is not available. Skipping LLM summarization examples.")
+
+```
+
+### ⚙️ Underlying LLM Helper Methods
+The LLM functionalities are built upon a few core methods:
+- `_get_llm_client(llm_provider, model_name, **kwargs)`: Initializes and returns a Langchain chat model client for the specified provider (e.g., "openai", "ollama") and model. Handles API key loading (e.g., `OPENAI_API_KEY` from env or kwargs) and other configurations.
+- `_chunk_text(text_to_chunk, strategy, chunk_size, chunk_overlap, **splitter_kwargs)`: Splits long texts into manageable chunks using different strategies (e.g., "recursive_char", "character"). This is useful for processing texts that exceed LLM context window limits, although `analyze_sentiment_llm` and `categorize_text_llm` currently process each text in a series individually.
+
+These methods can be used for more custom LLM workflows if needed, though they are primarily for internal use by the higher-level analysis functions.
+
+## 🚀 Streamlit Demo Application
+A Streamlit demo application, `streamlit_app.py`, is included in the repository to showcase the LLM functionalities.
+
+**To run the demo:**
+1. Ensure all dependencies are installed:
+   ```sh
+   pip install nlplot streamlit pandas langchain openai langchain-community
+   # If you cloned the repo and want to use the local nlplot version:
+   # pip install -e .
+   ```
+2. Set your `OPENAI_API_KEY` environment variable if using OpenAI.
+3. If using Ollama, ensure your Ollama server is running and models are downloaded (e.g., `ollama pull llama2`).
+4. Run the Streamlit app from the repository root:
+   ```sh
+   streamlit run streamlit_app.py
+   ```
+This will open a web interface where you can input text, configure LLM settings, choose an analysis type (sentiment or categorization), and view the results.
 
 ## Document
 TBD

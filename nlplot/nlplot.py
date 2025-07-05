@@ -51,8 +51,17 @@ except ImportError:
     class OllamaChat: pass # type: ignore
     class BaseChatModel: pass # type: ignore
     class PromptTemplate: pass # type: ignore
-    class AIMessage: # type: ignore
-        def __init__(self, content=""): self.content = content
+    class AIMessage(dict): # type: ignore # Adjusted to allow .content access if used as dict
+        def __init__(self, content="", **kwargs):
+            super().__init__(kwargs)
+            self.content = content
+        def __getattr__(self, name): # Allow attribute access for 'content'
+            if name == 'content': return self._content_attr
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+        def __setattr__(self, name, value):
+            if name == 'content': self._content_attr = value
+            else: super().__setattr__(name, value)
+
     class RecursiveCharacterTextSplitter: # type: ignore
         def __init__(self, chunk_size=None, chunk_overlap=None, length_function=None, **kwargs): pass
         def split_text(self, text: str) -> List[str]: return [text] if text else []
@@ -415,8 +424,14 @@ class NLPlot():
         return None
 
     # --- LLM Related Methods ---
-    def _get_llm_client(self, llm_provider: str, model_name: str, **kwargs) -> BaseChatModel:
-        if not LANGCHAIN_AVAILABLE: raise ImportError("Langchain or related packages are not installed. Please install them to use LLM features (e.g., pip install langchain langchain-openai langchain-community openai).")
+    def _get_llm_client(self, llm_provider: str, model_name: str, **kwargs) -> Any: # Return Any for now, will be BaseChatModel
+        """
+        (TDD Cycle 1 - Stub/Initial Implementation)
+        Retrieves an LLM client based on the provider and model name.
+        """
+        if not LANGCHAIN_AVAILABLE:
+            raise ImportError("Langchain or related packages are not installed. Please install them to use LLM features (e.g., pip install langchain langchain-openai langchain-community openai).")
+
         provider = llm_provider.lower()
         if provider == "openai":
             api_key = kwargs.pop("openai_api_key", os.getenv("OPENAI_API_KEY"))
@@ -439,13 +454,31 @@ class NLPlot():
         temperature: float = 0.0,
         **llm_config
     ) -> pd.DataFrame:
+        """
+        (TDD Cycle 2 - Stub/Initial Implementation)
+        Analyzes sentiment of texts using a specified LLM via Langchain.
+        """
         if not LANGCHAIN_AVAILABLE:
             print("Warning: Langchain or its dependencies are not installed. LLM-based sentiment analysis is not available.")
             return pd.DataFrame(columns=["text", "sentiment", "raw_llm_output"])
         if not isinstance(text_series, pd.Series):
             print("Warning: Input 'text_series' must be a pandas Series. Returning empty DataFrame with expected columns.")
             return pd.DataFrame(columns=["text", "sentiment", "raw_llm_output"])
-        if text_series.empty: return pd.DataFrame(columns=["text", "sentiment", "raw_llm_output"])
+        if text_series.empty:
+            return pd.DataFrame(columns=["text", "sentiment", "raw_llm_output"])
+
+        # --- Actual implementation will follow ---
+        # For now, return a DataFrame with the correct columns but placeholder data,
+        # or raise NotImplementedError, or return based on a very simple mock logic
+        # to make the initial "method exists" test pass and subsequent "basic functionality" tests fail.
+
+        # Placeholder (now replaced with actual implementation logic):
+        # results = []
+        # for text_input in text_series:
+        #     original_text_for_df = str(text_input) if pd.notna(text_input) else ""
+        #     results.append({"text": original_text_for_df, "sentiment": "stub_sentiment", "raw_llm_output": "stub_raw_output"})
+        # return pd.DataFrame(results, columns=["text", "sentiment", "raw_llm_output"])
+
         try:
             llm_client_config = llm_config.copy()
             if 'temperature' not in llm_client_config: llm_client_config['temperature'] = temperature
@@ -453,24 +486,55 @@ class NLPlot():
         except (ImportError, ValueError) as e:
             print(f"Error initializing LLM client: {e}")
             return pd.DataFrame([{'text': str(txt) if pd.notna(txt) else "", 'sentiment': 'error', 'raw_llm_output': str(e)} for txt in text_series], columns=["text", "sentiment", "raw_llm_output"])
-        if prompt_template_str is None: prompt_template_str = "Analyze the sentiment of the following text and classify it as 'positive', 'negative', or 'neutral'. Return only the single word classification for the sentiment. Text: {text}"
-        try: prompt = PromptTemplate.from_template(prompt_template_str)
-        except Exception as e: print(f"Error creating prompt template from string \"{prompt_template_str}\": {e}. Using a basic pass-through."); prompt = PromptTemplate.from_template("Text: {text}\nSentiment:")
+
+        if prompt_template_str is None:
+            prompt_template_str = "Analyze the sentiment of the following text and classify it as 'positive', 'negative', or 'neutral'. Return only the single word classification for the sentiment. Text: {text}"
+
+        try:
+            # Ensure PromptTemplate is used correctly
+            if "{text}" not in prompt_template_str: # Basic check for input variable
+                 raise ValueError("Prompt template must include '{text}' input variable.")
+            prompt = PromptTemplate.from_template(prompt_template_str)
+        except Exception as e:
+            print(f"Error creating prompt template from string \"{prompt_template_str}\": {e}. Using a basic pass-through.")
+            # Fallback or re-raise, depending on desired strictness. Here, re-raising for clarity.
+            # For a more robust fallback, one might define a very simple default prompt here.
+            # However, the current test setup expects a valid prompt or specific error handling.
+            # Let's make it return an error DataFrame consistent with other error paths.
+            error_msg = f"Prompt template error: {e}"
+            return pd.DataFrame([{'text': str(txt) if pd.notna(txt) else "", 'sentiment': 'error', 'raw_llm_output': error_msg} for txt in text_series], columns=["text", "sentiment", "raw_llm_output"])
+
         results = []
         for text_input in text_series:
-            original_text_for_df = str(text_input) if pd.notna(text_input) else ""; sentiment = "unknown"; raw_output = ""
-            if not original_text_for_df.strip(): sentiment = "neutral"; raw_output = "Input text was empty or whitespace."
+            original_text_for_df = str(text_input) if pd.notna(text_input) else ""
+            sentiment = "unknown" # Default sentiment if all else fails
+            raw_output = ""
+
+            if not original_text_for_df.strip(): # Handle empty or whitespace-only strings
+                sentiment = "neutral" # Or "unknown", depending on desired behavior for empty text
+                raw_output = "Input text was empty or whitespace."
             else:
                 try:
                     formatted_prompt_content = prompt.format_prompt(text=original_text_for_df).to_string()
                     response_message = llm.invoke(formatted_prompt_content)
                     raw_output = response_message.content if hasattr(response_message, 'content') else str(response_message)
+
                     processed_output = raw_output.strip().lower()
-                    if "positive" in processed_output: sentiment = "positive"
-                    elif "negative" in processed_output: sentiment = "negative"
-                    elif "neutral" in processed_output: sentiment = "neutral"
-                except Exception as e: print(f"Error analyzing sentiment for text '{original_text_for_df[:50]}...': {e}"); sentiment = "error"; raw_output = str(e)
+                    # More robust sentiment parsing:
+                    if "positive" in processed_output:
+                        sentiment = "positive"
+                    elif "negative" in processed_output:
+                        sentiment = "negative"
+                    elif "neutral" in processed_output:
+                        sentiment = "neutral"
+                    # else: sentiment remains "unknown" if keywords are not found
+                except Exception as e:
+                    print(f"Error analyzing sentiment for text '{original_text_for_df[:50]}...': {e}")
+                    sentiment = "error"
+                    raw_output = str(e)
+
             results.append({"text": original_text_for_df, "sentiment": sentiment, "raw_llm_output": raw_output})
+
         return pd.DataFrame(results, columns=["text", "sentiment", "raw_llm_output"])
 
     def categorize_text_llm(
@@ -485,55 +549,123 @@ class NLPlot():
         **llm_config
     ) -> pd.DataFrame:
         """
-        (TDD Cycle 3 - Implementation)
+        (TDD Cycle 3 - Stub/Initial Implementation)
         Categorizes texts using a specified LLM via Langchain.
         """
         category_col_name = "categories" if multi_label else "category"
         default_columns = ["text", category_col_name, "raw_llm_output"]
-        if not LANGCHAIN_AVAILABLE: print("Warning: Langchain or its dependencies are not installed. LLM-based categorization is not available."); return pd.DataFrame(columns=default_columns)
-        if not isinstance(text_series, pd.Series): print("Warning: Input 'text_series' must be a pandas Series."); return pd.DataFrame(columns=default_columns)
-        if text_series.empty: return pd.DataFrame(columns=default_columns)
-        if not categories or not isinstance(categories, list) or not all(isinstance(c, str) for c in categories): raise ValueError("Categories list must be a non-empty list of strings.")
+
+        if not LANGCHAIN_AVAILABLE:
+            print("Warning: Langchain or its dependencies are not installed. LLM-based categorization is not available.")
+            return pd.DataFrame(columns=default_columns)
+        if not isinstance(text_series, pd.Series):
+            print("Warning: Input 'text_series' must be a pandas Series.")
+            return pd.DataFrame(columns=default_columns)
+        if text_series.empty:
+            return pd.DataFrame(columns=default_columns)
+        if not categories or not isinstance(categories, list) or not all(isinstance(c, str) and c for c in categories):
+            # Ensure categories are non-empty strings
+            raise ValueError("Categories list must be a non-empty list of non-empty strings.")
+
+        # --- Actual implementation will follow ---
+        # Placeholder (now replaced with actual implementation logic):
+        # results = []
+        # for text_input in text_series:
+        #     original_text_for_df = str(text_input) if pd.notna(text_input) else ""
+        #     placeholder_cat = ["stub_category"] if multi_label else "stub_category"
+        #     results.append({"text": original_text_for_df, category_col_name: placeholder_cat, "raw_llm_output": "stub_raw_output"})
+        # return pd.DataFrame(results, columns=default_columns)
+
         try:
-            llm_client_config = llm_config.copy();
+            llm_client_config = llm_config.copy()
             if 'temperature' not in llm_client_config: llm_client_config['temperature'] = temperature
             llm = self._get_llm_client(llm_provider, model_name, **llm_client_config)
         except (ImportError, ValueError) as e:
             print(f"Error initializing LLM client: {e}")
             return pd.DataFrame([{'text': str(txt) if pd.notna(txt) else "", category_col_name: [] if multi_label else 'error', 'raw_llm_output': str(e)} for txt in text_series], columns=default_columns)
+
         category_list_str = ", ".join(f"'{c}'" for c in categories)
         if prompt_template_str is None:
-            if multi_label: prompt_template_str = (f"Analyze the following text and classify it into one or more of these categories: {category_list_str}. Return a comma-separated list of the matching category names. If no categories match, return 'none'. Text: {{text}}")
-            else: prompt_template_str = (f"Analyze the following text and classify it into exactly one of these categories: {category_list_str}. Return only the single matching category name. If no categories match, return 'unknown'. Text: {{text}}")
+            if multi_label:
+                prompt_template_str = (
+                    f"Analyze the following text and classify it into one or more of these categories: {category_list_str}. "
+                    f"Return a comma-separated list of the matching category names. If no categories match, return 'none'. Text: {{text}}"
+                )
+            else:
+                prompt_template_str = (
+                    f"Analyze the following text and classify it into exactly one of these categories: {category_list_str}. "
+                    f"Return only the single matching category name. If no categories match, return 'unknown'. Text: {{text}}"
+                )
+
         try:
-            if "{categories}" in prompt_template_str: prompt = PromptTemplate(template=prompt_template_str, input_variables=["text", "categories"])
-            else: prompt = PromptTemplate.from_template(prompt_template_str)
+            # Ensure PromptTemplate is used correctly, checking for necessary input variables
+            required_vars = ["text"]
+            if "{categories}" in prompt_template_str: # Optional variable for categories list in prompt
+                required_vars.append("categories")
+
+            # Check if all required variables are in the template string
+            missing_vars = [var for var in required_vars if f"{{{var}}}" not in prompt_template_str]
+            if missing_vars:
+                 raise ValueError(f"Prompt template is missing required input variables: {', '.join(missing_vars)}")
+
+            prompt = PromptTemplate(template=prompt_template_str, input_variables=required_vars)
         except Exception as e:
             print(f"Error creating prompt template: {e}.")
-            return pd.DataFrame([{'text': str(txt) if pd.notna(txt) else "", category_col_name: [] if multi_label else 'error', 'raw_llm_output': f"Prompt template error: {e}"} for txt in text_series], columns=default_columns)
+            error_msg = f"Prompt template error: {e}"
+            return pd.DataFrame([{'text': str(txt) if pd.notna(txt) else "", category_col_name: [] if multi_label else 'error', 'raw_llm_output': error_msg} for txt in text_series], columns=default_columns)
+
         results = []
         for text_input in text_series:
-            original_text_for_df = str(text_input) if pd.notna(text_input) else ""; raw_llm_resp_content = ""
-            if not original_text_for_df.strip(): parsed_categories = [] if multi_label else "unknown"; raw_llm_resp_content = "Input text was empty or whitespace."
+            original_text_for_df = str(text_input) if pd.notna(text_input) else ""
+            raw_llm_resp_content = ""
+            parsed_categories: Any = [] if multi_label else "unknown" # Default values
+
+            if not original_text_for_df.strip(): # Handle empty or whitespace-only strings
+                raw_llm_resp_content = "Input text was empty or whitespace."
+                # For empty text, 'unknown' (single) or empty list (multi) is reasonable.
             else:
                 try:
                     prompt_args = {"text": original_text_for_df}
-                    if "{categories}" in prompt.template: prompt_args["categories"] = category_list_str
+                    if "categories" in required_vars: # Only add if 'categories' is an input variable
+                        prompt_args["categories"] = category_list_str
+
                     formatted_prompt_content = prompt.format_prompt(**prompt_args).to_string()
                     response_message = llm.invoke(formatted_prompt_content)
                     raw_llm_resp_content = response_message.content if hasattr(response_message, 'content') else str(response_message)
                     processed_output = raw_llm_resp_content.strip().lower()
+
                     if multi_label:
-                        found_cats_raw = [cat.strip() for cat in processed_output.split(',')]; parsed_categories = [original_cat for original_cat in categories if original_cat.lower() in [fcr.lower() for fcr in found_cats_raw]]
-                    else:
-                        parsed_categories = "unknown"
+                        # Split by comma, strip whitespace from each part, and filter for valid categories
+                        found_cats_raw = [cat.strip() for cat in processed_output.split(',')]
+                        # Match found raw categories (case-insensitive) against the original categories list (preserving case)
+                        parsed_categories = [
+                            original_cat for original_cat in categories
+                            if original_cat.lower() in [fcr.lower() for fcr in found_cats_raw if fcr and fcr != 'none']
+                        ]
+                    else: # Single label
+                        # Attempt exact match first (case-insensitive)
+                        exact_match_found = False
                         for cat_original_case in categories:
-                            if cat_original_case.lower() == processed_output: parsed_categories = cat_original_case; break
-                        if parsed_categories == "unknown":
-                             for cat_original_case in categories:
-                                 if cat_original_case.lower() in processed_output: parsed_categories = cat_original_case; break
-                except Exception as e: print(f"Error categorizing text '{original_text_for_df[:50]}...': {e}"); parsed_categories = [] if multi_label else "error"; raw_llm_resp_content = str(e)
+                            if cat_original_case.lower() == processed_output:
+                                parsed_categories = cat_original_case
+                                exact_match_found = True
+                                break
+                        # Fallback: if no exact match, check if any category (case-insensitive) is a substring of the output
+                        if not exact_match_found:
+                            for cat_original_case in categories:
+                                if cat_original_case.lower() in processed_output:
+                                    parsed_categories = cat_original_case
+                                    break
+                            # If still 'unknown', and LLM output was 'unknown' or 'none', keep it as 'unknown'
+                            if parsed_categories == "unknown" and processed_output in ["unknown", "none"]:
+                                pass # Already set to unknown
+                except Exception as e:
+                    print(f"Error categorizing text '{original_text_for_df[:50]}...': {e}")
+                    parsed_categories = [] if multi_label else "error"
+                    raw_llm_resp_content = str(e)
+
             results.append({"text": original_text_for_df, category_col_name: parsed_categories, "raw_llm_output": raw_llm_resp_content})
+
         return pd.DataFrame(results, columns=default_columns)
 
     def _chunk_text(
@@ -545,20 +677,267 @@ class NLPlot():
         **splitter_kwargs
     ) -> List[str]:
         """
-        (TDD Cycle 4 - Initial Stub)
+        (TDD Cycle 4 - Stub/Initial Implementation)
         Splits a long text into smaller chunks using Langchain TextSplitters.
         """
         if not LANGCHAIN_AVAILABLE:
             print("Warning: Langchain or its text splitter components are not installed. Chunking will not be performed; returning original text as a single chunk.")
-            return [text_to_chunk] if text_to_chunk else []
+            return [text_to_chunk] if text_to_chunk else [] # Return list for consistency
 
-        # print("_chunk_text (stub) called.")
-        if not text_to_chunk: return [] # If input is empty, return empty list of chunks
+        if not text_to_chunk: # Handles empty string, None, etc.
+            return []
 
-        # Actual implementation will go here in Green phase for chunking
-        # For now, the stub returns the original text as a single chunk if not empty.
-        # This will make tests for actual chunking fail as expected (Red state for functionality).
-        return [text_to_chunk]
+        # --- Actual implementation will follow ---
+        # Placeholder to make the "method exists" test pass and "basic functionality" tests fail.
+        # For example, a simple split that doesn't use Langchain or proper chunking yet.
+        # Or just return the original text in a list if it's short enough based on chunk_size.
+
+        # Simplified stub logic for now:
+        # if len(text_to_chunk) > chunk_size:
+        #     # This is a very naive split, just to have something that might change based on input
+        #     # and allow tests for real splitter logic to fail.
+        #     return [text_to_chunk[:chunk_size], text_to_chunk[chunk_size:]]
+        # else:
+        # return [text_to_chunk]
+
+        # Per the original stub's intention for TDD:
+        # "For now, the stub returns the original text as a single chunk if not empty.
+        # This will make tests for actual chunking fail as expected (Red state for functionality)."
+        # print(f"_chunk_text called with strategy: {strategy}, chunk_size: {chunk_size}, chunk_overlap: {chunk_overlap}, splitter_kwargs: {splitter_kwargs}") # Debug print
+        # return [text_to_chunk] # Original stub logic
+
+        # (TDD Cycle 4 - Green Phase Implementation)
+        if strategy == "recursive_char":
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                length_function=len, # Default, but explicit
+                **splitter_kwargs
+            )
+        elif strategy == "character":
+            # Default separator if not provided in splitter_kwargs
+            separator = splitter_kwargs.pop("separator", "\n\n")
+            splitter = CharacterTextSplitter(
+                separator=separator,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                length_function=len, # Default, but explicit
+                **splitter_kwargs # Pass remaining kwargs
+            )
+        # Add more strategies here if needed, e.g., "sentence_transformers_token"
+        # elif strategy == "sentence_transformers_token":
+        #     from langchain.text_splitter import SentenceTransformersTokenTextSplitter
+        #     splitter = SentenceTransformersTokenTextSplitter(
+        #         chunk_overlap=chunk_overlap, # chunk_size is often model-specific for tokenizers
+        #         **splitter_kwargs
+        #     )
+        else:
+            raise ValueError(f"Unsupported chunking strategy: {strategy}. Supported strategies: 'recursive_char', 'character'.")
+
+        try:
+            return splitter.split_text(text_to_chunk)
+        except Exception as e:
+            print(f"Error during text chunking with strategy '{strategy}': {e}")
+            # Fallback: return original text as a single chunk if splitting fails
+            return [text_to_chunk]
+
+    def summarize_text_llm(
+        self,
+        text_series: pd.Series,
+        llm_provider: str,
+        model_name: str,
+        prompt_template_str: Optional[str] = None,
+        chunk_prompt_template_str: Optional[str] = None, # For individual chunks
+        combine_prompt_template_str: Optional[str] = None, # For combining summaries of chunks
+        max_length: Optional[int] = None, # Placeholder for max summary length if LLM supports
+        min_length: Optional[int] = None, # Placeholder for min summary length
+        temperature: float = 0.0,
+        use_chunking: bool = True, # Whether to use chunking for long texts
+        chunk_size: int = 1000,    # Default chunk size for summarization
+        chunk_overlap: int = 100,  # Default chunk overlap
+        **llm_config
+    ) -> pd.DataFrame:
+        """
+        Summarizes texts using a specified LLM via Langchain.
+        Can handle long texts by chunking, summarizing parts, and optionally combining those summaries.
+
+        Args:
+            text_series (pd.Series): Series containing texts to summarize.
+            llm_provider (str): The LLM provider to use (e.g., "openai", "ollama").
+            model_name (str): The specific model name for the chosen provider.
+            prompt_template_str (Optional[str], optional): Prompt template for summarizing
+                texts directly (when `use_chunking` is False). Must include "{text}".
+                Defaults to "Please summarize the following text: {text}".
+            chunk_prompt_template_str (Optional[str], optional): Prompt template for
+                summarizing individual chunks (when `use_chunking` is True). Must include "{text}".
+                Defaults to "Summarize this text: {text}".
+            combine_prompt_template_str (Optional[str], optional): Prompt template for
+                combining summaries of multiple chunks into a final summary
+                (when `use_chunking` is True and more than one chunk exists). Must include "{text}"
+                which will be filled with the concatenation of chunk summaries.
+                If None, chunk summaries are simply joined with newlines. Defaults to None.
+            max_length (Optional[int], optional): Placeholder for future use, intended for
+                LLMs that support explicit max summary length. Currently not directly enforced
+                by this method's core logic but passed in `llm_config` if provider supports it.
+                Defaults to None.
+            min_length (Optional[int], optional): Placeholder for future use, similar to `max_length`.
+                Defaults to None.
+            temperature (float, optional): Temperature for LLM generation. Defaults to 0.0.
+            use_chunking (bool, optional): Whether to split long texts into chunks for summarization.
+                Defaults to True.
+            chunk_size (int, optional): The character size for each text chunk when `use_chunking` is True.
+                Defaults to 1000.
+            chunk_overlap (int, optional): The character overlap between text chunks when `use_chunking` is True.
+                Defaults to 100.
+            **llm_config: Additional keyword arguments for the LLM client
+                          (e.g., `openai_api_key`, `base_url`).
+
+        Returns:
+            pd.DataFrame: DataFrame with columns ["original_text", "summary", "raw_llm_output"].
+                          "summary" contains the generated summary, or "error" / "error_prompt_..."
+                          if an issue occurred. "raw_llm_output" contains the direct output from
+                          the LLM and any intermediate outputs or error messages from chunking/combining.
+        """
+        default_columns = ["original_text", "summary", "raw_llm_output"]
+        if not LANGCHAIN_AVAILABLE:
+            print("Warning: Langchain or its dependencies are not installed. LLM-based summarization is not available.")
+            return pd.DataFrame(columns=default_columns)
+        if not isinstance(text_series, pd.Series):
+            print("Warning: Input 'text_series' must be a pandas Series.")
+            return pd.DataFrame(columns=default_columns)
+        if text_series.empty:
+            return pd.DataFrame(columns=default_columns)
+
+        # Placeholder implementation for the stub (now replaced by initial logic)
+        # results = []
+        # for text_input in text_series:
+        #     original_text_for_df = str(text_input) if pd.notna(text_input) else ""
+        #     results.append({
+        #         "original_text": original_text_for_df,
+        #         "summary": "stub_summary",
+        #         "raw_llm_output": "stub_raw_output_summarize"
+        #     })
+        # return pd.DataFrame(results, columns=default_columns)
+
+        try:
+            llm_client_config = llm_config.copy()
+            if 'temperature' not in llm_client_config: llm_client_config['temperature'] = temperature
+            # max_length and min_length are not standard for all LLMs via invoke,
+            # they might be part of model_kwargs or specific prompt instructions.
+            # For now, we pop them if they exist but don't directly pass them to _get_llm_client
+            # unless a specific LLM integration handles them.
+            llm_client_config.pop('max_length', None)
+            llm_client_config.pop('min_length', None)
+
+            llm = self._get_llm_client(llm_provider, model_name, **llm_client_config)
+        except (ImportError, ValueError) as e:
+            print(f"Error initializing LLM client for summarization: {e}")
+            return pd.DataFrame(
+                [{'original_text': str(txt) if pd.notna(txt) else "", 'summary': 'error', 'raw_llm_output': str(e)} for txt in text_series],
+                columns=default_columns
+            )
+
+        if prompt_template_str is None:
+            prompt_template_str = "Please summarize the following text: {text}"
+
+        try:
+            if "{text}" not in prompt_template_str:
+                 raise ValueError("Prompt template must include '{text}' input variable.")
+            summarize_prompt = PromptTemplate.from_template(prompt_template_str)
+        except Exception as e:
+            print(f"Error creating summarization prompt template: {e}.")
+            error_msg = f"Prompt template error: {e}"
+            return pd.DataFrame(
+                [{'original_text': str(txt) if pd.notna(txt) else "", 'summary': 'error', 'raw_llm_output': error_msg} for txt in text_series],
+                columns=default_columns
+            )
+
+        results = []
+        for text_input in text_series:
+            original_text_for_df = str(text_input) if pd.notna(text_input) else ""
+            summary_text = ""
+            raw_llm_resp = ""
+
+            if not original_text_for_df.strip():
+                summary_text = "" # Empty summary for empty input
+                raw_llm_resp = "Input text was empty or whitespace."
+            elif not use_chunking: # Process directly if not using chunking
+                try:
+                    formatted_prompt = summarize_prompt.format_prompt(text=original_text_for_df).to_string()
+                    response_message = llm.invoke(formatted_prompt) # type: ignore
+                    raw_llm_resp = response_message.content if hasattr(response_message, 'content') else str(response_message)
+                    summary_text = raw_llm_resp.strip()
+                except Exception as e:
+                    print(f"Error summarizing text '{original_text_for_df[:50]}...': {e}")
+                    summary_text = "error"
+                    raw_llm_resp = str(e)
+            else: # use_chunking is True
+                chunks = self._chunk_text(
+                    original_text_for_df,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap
+                )
+                if not chunks:
+                    summary_text = ""
+                    raw_llm_resp = "Text was empty or too short after attempting to chunk."
+                else:
+                    chunk_summaries = []
+                    current_chunk_prompt_str = chunk_prompt_template_str if chunk_prompt_template_str else "Summarize this text: {text}"
+                    try:
+                        if "{text}" not in current_chunk_prompt_str:
+                            raise ValueError("Chunk prompt template must include '{text}'.")
+                        chunk_prompt_tpl = PromptTemplate.from_template(current_chunk_prompt_str)
+                    except Exception as e:
+                        print(f"Error creating chunk summarization prompt template: {e}.")
+                        summary_text = "error_prompt_chunk"
+                        raw_llm_resp = f"Chunk prompt template error: {e}"
+                        results.append({"original_text": original_text_for_df, "summary": summary_text, "raw_llm_output": raw_llm_resp})
+                        continue
+
+                    all_raw_outputs_for_this_text = []
+                    for i, chunk_text in enumerate(chunks):
+                        try:
+                            formatted_chunk_prompt = chunk_prompt_tpl.format_prompt(text=chunk_text).to_string()
+                            response_message = llm.invoke(formatted_chunk_prompt) # type: ignore
+                            chunk_summary_content = response_message.content if hasattr(response_message, 'content') else str(response_message)
+                            chunk_summaries.append(chunk_summary_content.strip())
+                            all_raw_outputs_for_this_text.append(f"Chunk {i+1}/{len(chunks)} Summary: {chunk_summary_content.strip()}")
+                        except Exception as e:
+                            error_msg = f"Error summarizing chunk {i+1}/{len(chunks)}: {e}"
+                            print(error_msg)
+                            chunk_summaries.append(f"[Error in chunk {i+1}]")
+                            all_raw_outputs_for_this_text.append(error_msg)
+
+                    combined_intermediate_summary = "\n".join(chunk_summaries)
+                    raw_llm_resp = "\n---\n".join(all_raw_outputs_for_this_text)
+
+                    if combine_prompt_template_str and len(chunks) > 1:
+                        current_combine_prompt_str = combine_prompt_template_str
+                        if "{text}" not in current_combine_prompt_str:
+                             print(f"Warning: combine_prompt_template_str ('{current_combine_prompt_str}') does not contain '{{text}}'. Using combined chunk summaries directly.")
+                             summary_text = combined_intermediate_summary
+                        else:
+                            try:
+                                combine_prompt_tpl = PromptTemplate.from_template(current_combine_prompt_str)
+                                formatted_combine_prompt = combine_prompt_tpl.format_prompt(text=combined_intermediate_summary).to_string()
+                                final_response_msg = llm.invoke(formatted_combine_prompt) # type: ignore
+                                summary_text = final_response_msg.content.strip() if hasattr(final_response_msg, 'content') else str(final_response_msg).strip()
+                                raw_llm_resp += f"\n---\nFinal Combined Summary Raw Output: {summary_text}" # Append to existing raw outputs
+                            except Exception as e:
+                                error_msg = f"Error combining chunk summaries: {e}"
+                                print(error_msg)
+                                summary_text = f"[Error combining summaries, using intermediate: {combined_intermediate_summary[:100]}...]"
+                                raw_llm_resp += f"\n---\n{error_msg}"
+                    else: # No combine prompt or only one chunk
+                        summary_text = combined_intermediate_summary
+
+            results.append({
+                "original_text": original_text_for_df,
+                "summary": summary_text,
+                "raw_llm_output": raw_llm_resp
+            })
+
+        return pd.DataFrame(results, columns=default_columns)
 
 
     def plot_japanese_text_features(
