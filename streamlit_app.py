@@ -28,6 +28,7 @@ model_string = st.sidebar.text_input(
 
 # Common LiteLLM parameters
 temperature = st.sidebar.slider("Temperature", min_value=0.0, max_value=2.0, value=0.0, step=0.1)
+max_tokens = st.sidebar.number_input("Max Tokens (Output)", min_value=10, max_value=8192, value=256, step=10, help="Maximum number of tokens the model should generate. Adjust based on model and task.")
 
 # Optional API Key / Base URL (LiteLLM often reads from env vars)
 st.sidebar.markdown("---")
@@ -38,6 +39,8 @@ api_base_input = st.sidebar.text_input("API Base URL (e.g., Ollama, custom OpenA
 # Prepare litellm_kwargs
 litellm_kwargs = {}
 litellm_kwargs["temperature"] = temperature
+if max_tokens > 0: # Ensure max_tokens is positive, though number_input should enforce min_value
+    litellm_kwargs["max_tokens"] = max_tokens
 if api_key_input:
     litellm_kwargs["api_key"] = api_key_input
 if api_base_input:
@@ -66,19 +69,42 @@ st.header("Analysis Type")
 analysis_options = ["Sentiment Analysis", "Text Categorization", "Text Summarization"]
 analysis_type = st.selectbox("Select Analysis", analysis_options)
 
-# Analysis Specific Options
+# --- Analysis Specific Options ---
+
+# Sentiment Analysis Options
+prompt_sentiment = ""
+
+# Text Categorization Options
 categories_input_str = ""
 multi_label_categories = False
+prompt_categorize = ""
+
+# Text Summarization Options
 use_chunking_summarize = True
 chunk_size_summarize = 1000
 chunk_overlap_summarize = 100
-chunk_prompt_template_summarize = ""
+chunk_prompt_template_summarize = "" # This will be used for direct prompt if not chunking
 combine_prompt_template_summarize = ""
 
-if analysis_type == "Text Categorization":
+
+if analysis_type == "Sentiment Analysis":
+    st.subheader("Sentiment Analysis Options")
+    prompt_sentiment = st.text_area(
+        "Sentiment Analysis Prompt (optional, use {text})",
+        value="Analyze the sentiment of the following text and classify it as 'positive', 'negative', or 'neutral'. Return only the single word classification for the sentiment. Text: {text}",
+        height=150,
+        help="Define the prompt for sentiment analysis. Available placeholder: {text}. If empty, library default is used."
+    )
+elif analysis_type == "Text Categorization":
     st.subheader("Categorization Options")
     categories_input_str = st.text_input("Categories (comma-separated)", value="news,sports,technology,finance,health")
     multi_label_categories = st.checkbox("Allow multiple labels per text", value=False)
+    prompt_categorize = st.text_area(
+        "Categorization Prompt (optional, use {text} and {categories})",
+        value="", # Default will be set in core.py or based on multi_label
+        height=150,
+        help="Define the prompt for text categorization. Placeholders: {text}, {categories}. If empty, library default is used."
+    )
 elif analysis_type == "Text Summarization":
     st.subheader("Summarization Options")
     use_chunking_summarize = st.checkbox("Use Chunking for Long Texts", value=True)
@@ -86,22 +112,23 @@ elif analysis_type == "Text Summarization":
         chunk_size_summarize = st.number_input("Chunk Size", min_value=100, max_value=10000, value=1000, step=100)
         chunk_overlap_summarize = st.number_input("Chunk Overlap", min_value=0, max_value=chunk_size_summarize-50 if chunk_size_summarize > 50 else 0, value=100, step=50)
         chunk_prompt_template_summarize = st.text_area(
-            "Chunk Summarization Prompt (optional, use {text})",
+            "Chunk Summarization Prompt (optional)",
             value="Summarize this text concisely: {text}",
-            height=100
+            height=120,
+            help="Prompt for summarizing individual text chunks. Use placeholder: {text}. If empty, library default is used."
         )
         combine_prompt_template_summarize = st.text_area(
-            "Combine Summaries Prompt (optional, use {text} for combined chunks)",
+            "Combine Summaries Prompt (optional)",
             value="Combine the following summaries into a coherent final summary: {text}",
-            height=100
+            height=120,
+            help="Prompt for combining summaries of multiple chunks. Use placeholder: {text} (which will contain concatenated chunk summaries). If empty, library default is used or summaries are just joined."
         )
     else: # Direct summarization prompt (if not chunking)
-        # This could also be the 'prompt_template_str' for summarize_text_llm
-        # For simplicity, let's use a general prompt if not chunking, or allow user to specify one.
-         chunk_prompt_template_summarize = st.text_area( # Re-use for direct prompt if not chunking
-            "Summarization Prompt (use {text})",
-            value="Please summarize the following text: {text}",
-            height=100
+         chunk_prompt_template_summarize = st.text_area( # Re-use this variable for the direct prompt
+            "Summarization Prompt (optional, use {text})",
+            value="Please summarize the following text: {text}", # Default direct prompt
+            height=120,
+            help="Prompt for summarizing the text directly (when chunking is disabled). Use placeholder: {text}. If empty, library default is used."
         )
 
 
@@ -127,10 +154,13 @@ if st.button(f"Run {analysis_type}"):
                 with st.spinner("Analyzing..."):
                     if analysis_type == "Sentiment Analysis":
                         st.subheader("Sentiment Analysis Results")
+                        analyze_kwargs = litellm_kwargs.copy()
+                        if prompt_sentiment.strip():
+                            analyze_kwargs["prompt_template_str"] = prompt_sentiment
                         result_df = npt.analyze_sentiment_llm(
                             text_series=text_series,
                             model=model_string, # Use the LiteLLM model string
-                            **litellm_kwargs # Pass all collected LiteLLM kwargs
+                            **analyze_kwargs # Pass all collected LiteLLM kwargs
                         )
                         st.dataframe(result_df)
 
@@ -143,12 +173,15 @@ if st.button(f"Run {analysis_type}"):
                             if not categories_list:
                                 st.error("No valid categories provided.")
                             else:
+                                categorize_kwargs = litellm_kwargs.copy()
+                                if prompt_categorize.strip():
+                                    categorize_kwargs["prompt_template_str"] = prompt_categorize
                                 result_df = npt.categorize_text_llm(
                                     text_series=text_series,
                                     categories=categories_list,
                                     model=model_string, # Use the LiteLLM model string
                                     multi_label=multi_label_categories,
-                                    **litellm_kwargs # Pass all collected LiteLLM kwargs
+                                    **categorize_kwargs # Pass all collected LiteLLM kwargs
                                 )
                                 st.dataframe(result_df)
 
@@ -187,8 +220,10 @@ else:
     st.caption(f"Click the 'Run {analysis_type}' button to start.") # Dynamic button text in caption
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("Powered by NLPlotLLM and Streamlit.") # Updated name
-st.sidebar.markdown("Ensure your LLM (OpenAI API, Ollama server, etc.) is configured and accessible as per LiteLLM requirements.") # Updated guidance
+st.sidebar.markdown("Refer to [LiteLLM Documentation](https://docs.litellm.ai/docs/providers) for provider-specific API keys (e.g., `OPENAI_API_KEY`, `AZURE_API_KEY`, `COHERE_API_KEY`, `ANTHROPIC_API_KEY`) and other parameters. For local models like Ollama, ensure the server is running.")
+st.sidebar.markdown("---")
+st.sidebar.markdown("Powered by NLPlotLLM and Streamlit.")
+st.sidebar.markdown("Ensure your LLM is configured and accessible as per LiteLLM requirements.")
 
 # To run this app:
 # 1. Ensure nlplot_llm, streamlit, pandas, litellm are installed.

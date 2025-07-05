@@ -15,8 +15,12 @@ except ImportError:
     MODULE_LANGCHAIN_AVAILABLE = False # Fallback if flag not found in nlplot_llm.core
     LANGCHAIN_SPLITTERS_AVAILABLE_FOR_TEST = False
     # Dummy classes for type hints if Langchain components are not installed in test environment
-    class RecursiveCharacterTextSplitter:
+    class RecursiveCharacterTextSplitter: # type: ignore
         def __init__(self, chunk_size, chunk_overlap, length_function=None, **kwargs): pass
+        def split_text(self, text): return [text] if text else []
+
+    class CharacterTextSplitter: # type: ignore
+        def __init__(self, separator, chunk_size, chunk_overlap, length_function=None, **kwargs): pass
         def split_text(self, text): return [text] if text else []
 
     class CharacterTextSplitter:
@@ -154,11 +158,91 @@ def test_chunk_text_character_strategy_mocked(MockCharacterSplitter, npt_llm_uti
 # - Texts that are exactly at the boundary of chunk_size.
 # - Texts with various types of separators for CharacterTextSplitter.
 # - If other strategies like "sentence_transformers_token" are implemented, tests for those.
-# - Behavior when LANGCHAIN_AVAILABLE is False (should ideally raise ImportError or return empty with warning).
+# - Behavior when LANGCHAIN_SPLITTERS_AVAILABLE is False (should return original text with warning).
 # - Non-string input to _chunk_text.
+
+@patch("nlplot_llm.core.LANGCHAIN_SPLITTERS_AVAILABLE", False)
+@patch("builtins.print")
+def test_chunk_text_langchain_splitters_not_available(mock_print, npt_llm_utils_instance):
+    """Tests _chunk_text behavior when LANGCHAIN_SPLITTERS_AVAILABLE is False."""
+    npt = npt_llm_utils_instance
+    test_text = "This is a test text."
+    try:
+        chunks = npt._chunk_text(test_text, strategy="recursive_char", chunk_size=10, chunk_overlap=0)
+        assert chunks == [test_text], "Should return the original text as a single chunk."
+        mock_print.assert_any_call("Warning: Langchain text splitter components are not installed. Chunking will not be performed; returning original text as a single chunk.")
+
+        # Test with empty text
+        chunks_empty = npt._chunk_text("", strategy="recursive_char")
+        assert chunks_empty == [], "Empty string should return empty list even if splitters unavailable."
+    except AttributeError:
+        pytest.fail("_chunk_text method not found. This test should run after the method stub is added.")
+
+# Further tests for actual chunking logic (assuming LANGCHAIN_SPLITTERS_AVAILABLE is True)
+
+@pytest.mark.skipif(not LANGCHAIN_SPLITTERS_AVAILABLE_FOR_TEST, reason="Langchain text splitters not available in test environment for detailed tests.")
+def test_chunk_text_recursive_char_actual(npt_llm_utils_instance):
+    """Tests RecursiveCharacterTextSplitter actual behavior via _chunk_text."""
+    npt = npt_llm_utils_instance
+    long_text = "This is a long sentence that will be split. This is another long sentence that will also be split."
+    # Expected: With chunk_size=30, overlap=5 (using RecursiveCharacterTextSplitter defaults for separators)
+    # "This is a long sentence that " (length 29)
+    # "sentence that will be split. " (overlap "that ", "will be split. ")
+    # "split. This is another long "
+    # "another long sentence that will "
+    # "that will also be split."
+
+    try:
+        chunks = npt._chunk_text(long_text, strategy="recursive_char", chunk_size=30, chunk_overlap=5)
+        assert isinstance(chunks, list)
+        assert len(chunks) > 1 # Expecting multiple chunks
+        # More specific assertions can be added if exact output is predictable and stable
+        # For example, check if total length of chunks (minus overlaps) is similar to original.
+        # Or check if specific parts of the text are in expected chunks.
+        # print(f"Recursive Chunks: {chunks}") # For debugging
+        assert chunks[0] == "This is a long sentence that" # Adjust based on actual output
+        assert "will be split." in chunks[1] # Example check
+        assert sum(len(c) for c in chunks) >= len(long_text) # Due to overlap
+
+    except AttributeError:
+        pytest.fail("_chunk_text method not found.")
+    except Exception as e:
+        pytest.fail(f"_chunk_text with RecursiveCharacterTextSplitter failed: {e}")
+
+
+@pytest.mark.skipif(not LANGCHAIN_SPLITTERS_AVAILABLE_FOR_TEST, reason="Langchain text splitters not available for detailed tests.")
+def test_chunk_text_character_actual(npt_llm_utils_instance):
+    """Tests CharacterTextSplitter actual behavior via _chunk_text."""
+    npt = npt_llm_utils_instance
+    text_with_specific_sep = "Part1---Part2---Another Long Part3"
+
+    try:
+        chunks = npt._chunk_text(
+            text_with_specific_sep,
+            strategy="character",
+            separator="---",
+            chunk_size=10, # chunk_size might be tricky with CharacterTextSplitter if separator makes parts too long
+            chunk_overlap=0
+        )
+        assert isinstance(chunks, list)
+        # Expected: ["Part1", "Part2", "Another Lo", "ng Part3"] if chunk_size forces splits within "Another Long Part3"
+        # Or simply ["Part1", "Part2", "Another Long Part3"] if chunk_size is large enough for each part
+        # Let's test with a chunk_size that doesn't force internal splits for simplicity of this example,
+        # focusing on the separator.
+        # print(f"Character Chunks (sep='---', size=10): {chunks}")
+        # assert chunks == ["Part1", "Part2", "Another Lo", "ng Part3"] # This depends heavily on splitter's internal logic for size
+
+        chunks_larger_size = npt._chunk_text(
+            text_with_specific_sep,
+            strategy="character",
+            separator="---",
+            chunk_size=100, # Large enough to not split "Another Long Part3"
+            chunk_overlap=0
+        )
+        assert chunks_larger_size == ["Part1", "Part2", "Another Long Part3"]
+
+    except AttributeError:
+        pytest.fail("_chunk_text method not found.")
+    except Exception as e:
+        pytest.fail(f"_chunk_text with CharacterTextSplitter failed: {e}")
 ```
-
-この新しいテストファイル `tests/test_nlplot_llm_utils.py` を作成しました。
-最初のテスト `test_chunk_text_initial_method_missing` が、`_chunk_text` メソッドが存在しないことによる `AttributeError` を期待する Red フェーズのテストとなります。
-
-次に、`nlplot.py` に `_chunk_text` メソッドのスタブと、関連するLangchain TextSplitterのインポートを追加します。

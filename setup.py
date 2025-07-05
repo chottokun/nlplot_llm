@@ -26,6 +26,6 @@ setup(
     install_requires=read_requirements(),
     packages=find_packages(exclude=('tests')),
     tests_require=["pytest"],
-    package_data={'nlplot': ['data/*']},
+    package_data={'nlplot_llm': ['data/*']}, # Corrected package name
     python_requires='>=3.6'
 )

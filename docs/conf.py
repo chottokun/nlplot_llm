@@ -12,17 +12,17 @@
 #
 import os
 import sys
-sys.path.insert(0, os.path.abspath('../nlplot/'))
+sys.path.insert(0, os.path.abspath('..')) # Point to the project root
 
 
 # -- Project information -----------------------------------------------------
 
-project = 'nlplot'
-copyright = '2021, Takanobu Nozawa'
+project = 'nlplot_llm'
+copyright = '2021-2024, Takanobu Nozawa'
 author = 'Takanobu Nozawa'
 
 # The full version, including alpha/beta/rc tags
-release = '1.5.0'
+release = '0.1.0'
 
 
 # -- General configuration ---------------------------------------------------

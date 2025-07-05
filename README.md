@@ -12,11 +12,12 @@ nlplot_llm: Enhanced Natural Language Processing analysis and visualization with
     - **Sentiment Analysis:** Analyze sentiment of texts.
     - **Text Categorization:** Classify texts into predefined categories (single and multi-label).
     - **Text Summarization:** Generate summaries of texts, with support for chunking long documents.
-    - Access to 100+ LLMs (OpenAI, Azure, Ollama, Cohere, Anthropic, etc.) through a unified interface.
+    - Access to 100+ LLMs (OpenAI, Azure, Ollama, Cohere, Anthropic, etc.) through a unified interface via LiteLLM.
+- **Customizable Prompts:** Easily customize prompts for all LLM-powered analyses.
 - **Text Chunking:** Helper methods for splitting long texts, useful for LLM preprocessing (uses Langchain TextSplitters).
 
 ## Description
-`nlplot_llm` extends the original `nlplot` library by integrating robust LLM capabilities through LiteLLM. This allows for advanced text analysis tasks like sentiment analysis, categorization, and summarization across a wide range of language models, while retaining useful NLP visualizations.
+`nlplot_llm` extends the original `nlplot` library by integrating robust LLM capabilities through LiteLLM. This allows for advanced text analysis tasks like sentiment analysis, categorization, and summarization across a wide range of language models—with customizable prompts—while retaining useful NLP visualizations.
 
 You can draw the following graph
 
@@ -33,18 +34,16 @@ You can draw the following graph
 - Python 3.7+
 - Core dependencies: `pandas`, `numpy`, `plotly>=4.12.0`, `matplotlib`, `wordcloud`, `pillow`, `networkx`, `seaborn`, `tqdm`.
 - For Japanese text features: `janome`.
-- For LLM-based features: `litellm`.
-- For text chunking (used by LLM features): `langchain-text-splitters` (or `langchain_text_splitters` if you prefer to list the specific sub-package).
+- For LLM-based features: `litellm>=1.0` (core dependency).
+- For text chunking (used by LLM features): `langchain-text-splitters` (core dependency).
 See `requirements.txt` for full details.
 
 ## Installation
 ```sh
 pip install nlplot_llm
 ```
-This will install `nlplot_llm` along with its core dependencies.
-To use LLM features, ensure `litellm` is installed (it's listed in `requirements.txt`).
-For Japanese text analysis, `janome` is required.
-For text chunking (often used with LLMs), `langchain-text-splitters` is needed.
+This will install `nlplot_llm` along with its core dependencies, including `litellm` and `langchain-text-splitters`.
+For Japanese text analysis, `janome` is required (install separately if needed: `pip install janome`).
 
 I've posted on [this blog](https://www.takapy.work/entry/2020/05/17/192947) about the specific use of the original nlplot. (Japanese)
 
@@ -209,33 +208,33 @@ sentiment_texts = pd.Series([
 ])
 
 # Example with an OpenAI model via LiteLLM
-# Ensure OPENAI_API_KEY environment variable is set, or pass api_key in litellm_kwargs parameter.
-# if LITELLM_AVAILABLE: # You can use this check if LITELLM_AVAILABLE is exposed from nlplot_llm.core
+# Ensure OPENAI_API_KEY environment variable is set, or pass api_key in litellm_kwargs.
 try:
-    sentiment_df = npt.analyze_sentiment_llm(
+    sentiment_df_openai = npt.analyze_sentiment_llm(
         text_series=sentiment_texts,
         model="openai/gpt-3.5-turbo", # LiteLLM model string
-        # You can pass additional litellm_kwargs if needed, e.g.:
-        # temperature=0.7, api_key="your_openai_key"
+        # litellm_kwargs can be used to pass provider-specific params, e.g., api_key
+        # litellm_kwargs={"api_key": "YOUR_OPENAI_KEY"}
     )
     print("\\nSentiment Analysis Results (OpenAI via LiteLLM):")
-    print(sentiment_df)
+    print(sentiment_df_openai)
 except Exception as e:
-    print(f"Sentiment analysis example failed: {e}")
+    print(f"OpenAI sentiment analysis example failed: {e}")
 
-# Example with an Ollama model via LiteLLM (ensure Ollama server is running)
+# Example with an Ollama model and custom prompt via LiteLLM
+# Ensure Ollama server is running (e.g., `ollama serve`) and the model is pulled (e.g., `ollama pull mistral`).
+custom_sentiment_prompt = "Given the text, is the author happy, sad, or neutral? Return one word. Text: {text}"
 try:
-    sentiment_df_ollama = npt.analyze_sentiment_llm(
+    sentiment_df_ollama_custom = npt.analyze_sentiment_llm(
         text_series=sentiment_texts,
-        model="ollama/llama2" # Or your preferred Ollama model (e.g., "ollama/mistral")
-        # litellm_kwargs={"api_base": "http://localhost:11434"} # Default, but can be specified
+        model="ollama/mistral", # Or your preferred Ollama model
+        prompt_template_str=custom_sentiment_prompt,
+        litellm_kwargs={"api_base": "http://localhost:11434", "temperature": 0.2} # Specify API base if not default
     )
-    print("\\nSentiment Analysis Results (Ollama via LiteLLM):")
-    print(sentiment_df_ollama)
+    print("\\nSentiment Analysis Results (Ollama with custom prompt via LiteLLM):")
+    print(sentiment_df_ollama_custom)
 except Exception as e:
     print(f"Ollama sentiment analysis example failed: {e}")
-# else:
-#     print("LiteLLM support is not available. Skipping LLM sentiment analysis examples.")
 ```
 
 ### LLM Text Categorization
@@ -248,32 +247,35 @@ texts_for_categorization = pd.Series([
     "This new AI gadget is great for gaming and office work."
 ])
 defined_categories = ["finance", "sports", "science", "technology", "gaming", "office work"]
+custom_categorize_prompt_single = "Classify the following text into one of these categories: {categories}. Text: {text}. Return only the category name."
+custom_categorize_prompt_multi = "Classify the following text into one or more of these categories: {categories}. Text: {text}. Return a comma-separated list of category names."
 
-# if LITELLM_AVAILABLE:
 try:
-    # Single-label categorization with an OpenAI model via LiteLLM
+    # Single-label categorization with an OpenAI model and custom prompt
     cat_single_df = npt.categorize_text_llm(
         text_series=texts_for_categorization,
         categories=defined_categories,
         model="openai/gpt-3.5-turbo",
-        multi_label=False
+        prompt_template_str=custom_categorize_prompt_single,
+        multi_label=False,
+        # litellm_kwargs={"api_key": "YOUR_OPENAI_KEY"}
     )
-    print("\\nSingle-label Categorization Results (OpenAI via LiteLLM):")
+    print("\\nSingle-label Categorization Results (OpenAI with custom prompt):")
     print(cat_single_df)
 
-    # Multi-label categorization with an Ollama model via LiteLLM
+    # Multi-label categorization with an Ollama model
     cat_multi_df = npt.categorize_text_llm(
         text_series=texts_for_categorization,
         categories=defined_categories,
-        model="ollama/llama2",
-        multi_label=True
+        model="ollama/mistral",
+        prompt_template_str=custom_categorize_prompt_multi, # Using the custom multi-label prompt
+        multi_label=True,
+        litellm_kwargs={"temperature": 0.1}
     )
     print("\\nMulti-label Categorization Results (Ollama via LiteLLM):")
     print(cat_multi_df)
 except Exception as e:
     print(f"LLM categorization example failed: {e}")
-# else:
-#     print("LiteLLM support is not available. Skipping LLM categorization examples.")
 ```
 
 ### LLM Text Summarization
@@ -284,37 +286,38 @@ long_text_series = pd.Series([
     "This is the first long document. It contains multiple sentences and discusses various topics that need to be condensed into a short summary. The goal is to capture the main essence of this text efficiently. It talks about artificial intelligence, machine learning, and natural language processing.",
     "Another document here, also quite lengthy. It explores different ideas and presents several arguments. Summarizing this will help in quick understanding. It talks about AI, programming, and the future of technology, including ethical considerations and societal impact."
 ])
+custom_chunk_prompt = "Summarize this section concisely: {text}"
+custom_combine_prompt = "Combine these summaries into a single, coherent narrative: {text}"
 
-# if LITELLM_AVAILABLE:
 try:
-    # Summarization with chunking (default) using an OpenAI model
+    # Summarization with chunking, custom prompts, using an OpenAI model
     summaries_df = npt.summarize_text_llm(
         text_series=long_text_series,
         model="openai/gpt-3.5-turbo",
-        # litellm_kwargs={"api_key": "your_openai_key"}
-        # chunk_size=1000, # Default
-        # chunk_overlap=100, # Default
-        # chunk_prompt_template_str="Summarize this: {text}", # Optional
-        # combine_prompt_template_str="Combine these summaries: {text}" # Optional
+        chunk_prompt_template_str=custom_chunk_prompt,
+        combine_prompt_template_str=custom_combine_prompt,
+        # litellm_kwargs={"api_key": "YOUR_OPENAI_KEY", "max_tokens": 150},
+        chunk_size=1000,
+        chunk_overlap=100
     )
-    print("\\nLLM Text Summarization Results (OpenAI via LiteLLM, Chunked):")
+    print("\\nLLM Text Summarization Results (OpenAI, Chunked, Custom Prompts):")
     print(summaries_df)
 
-    # Example of direct summarization without chunking for shorter texts
-    short_text_series = pd.Series(["A very short text to summarize directly."])
+    # Example of direct summarization (no chunking) with an Ollama model
+    short_text_series = pd.Series(["A very short text to summarize directly without any fuss."])
+    direct_summary_prompt = "Provide a one-sentence summary of: {text}"
     short_summary_df = npt.summarize_text_llm(
         text_series=short_text_series,
-        model="openai/gpt-3.5-turbo",
+        model="ollama/mistral",
         use_chunking=False,
-        prompt_template_str="Provide a very brief summary of: {text}" # Custom prompt
+        prompt_template_str=direct_summary_prompt,
+        litellm_kwargs={"temperature": 0.0}
     )
-    print("\\nLLM Short Text Summarization (No Chunking):")
+    print("\\nLLM Short Text Summarization (Ollama, No Chunking, Custom Prompt):")
     print(short_summary_df)
 
 except Exception as e:
     print(f"LLM summarization example failed: {e}")
-# else:
-#     print("LiteLLM support is not available. Skipping LLM summarization examples.")
 ```
 
 ### ⚙️ Underlying Helper Methods (Internal)
@@ -329,16 +332,35 @@ A Streamlit demo application, `streamlit_app.py`, is included in the repository 
    pip install nlplot_llm streamlit pandas litellm langchain-text-splitters
    # If you cloned the repo and want to use the local nlplot_llm version:
    # pip install -e .
+   # Ensure Janome is installed if you use Japanese text features with the core library:
+   # pip install janome
    ```
-2. Configure your LLM provider credentials (e.g., set `OPENAI_API_KEY` environment variable for OpenAI models, ensure Ollama server is running for `ollama/...` models). Refer to [LiteLLM's documentation](https://docs.litellm.ai/docs/providers) for provider-specific setup.
-3. Run the Streamlit app from the repository root:
+2. **Configure LLM Provider:**
+   - Set necessary environment variables for your chosen LLM provider (e.g., `OPENAI_API_KEY`, `AZURE_API_KEY`, `COHERE_API_KEY`).
+   - For local models like Ollama, ensure your Ollama server is running (`ollama serve`) and the desired models are pulled (e.g., `ollama pull mistral`).
+   - Refer to the [LiteLLM Documentation](https://docs.litellm.ai/docs/providers) for detailed provider-specific setup.
+   - You can also provide API keys and other parameters directly in the Streamlit app's sidebar if preferred over environment variables.
+3. **Run the Streamlit App:**
+   From the repository root, execute:
    ```sh
    streamlit run streamlit_app.py
    ```
-This will open a web interface where you can input text, specify the LiteLLM model string, choose an analysis type, and view the results.
+This will open a web interface where you can:
+- Input text for analysis.
+- Specify the LiteLLM model string (e.g., `openai/gpt-3.5-turbo`, `ollama/mistral`, `azure/your-deployment`).
+- Adjust common LLM parameters like Temperature and Max Tokens.
+- Optionally override API Key and API Base URL.
+- Choose an analysis type (Sentiment, Categorization, Summarization).
+- For each analysis type, you can further customize options, including the **prompt templates** used by the LLM.
+- View the results directly in the app.
 
 ## Document
-TBD
+API documentation can be generated using Sphinx. Navigate to the `docs/` directory and run:
+```sh
+make html
+```
+The generated documentation will be available in `docs/_build/html/index.html`.
+(More detailed user guides and explanations are TBD).
 
 ## Test
 ```sh

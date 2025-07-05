@@ -236,11 +236,101 @@ def test_analyze_sentiment_llm_api_error(mock_litellm_completion, npt_llm_instan
     printed_output = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
     assert "Error analyzing sentiment for text" in printed_output
     assert "Simulated API Error" in printed_output
+
+
+@pytest.mark.parametrize(
+    "exception_type, error_message_detail",
+    [
+        (litellm.exceptions.AuthenticationError, "Simulated LiteLLM Auth Error"),
+        (litellm.exceptions.RateLimitError, "Simulated LiteLLM Rate Limit Error"),
+        (litellm.exceptions.BadRequestError, "Simulated LiteLLM Bad Request Error"), # Example of another error
+        (Exception, "Generic Exception") # Fallback for other unexpected errors
+    ]
+)
+@patch('litellm.completion')
+def test_analyze_sentiment_llm_various_api_errors(mock_litellm_completion, exception_type, error_message_detail, npt_llm_instance):
+    if not LITELLM_AVAILABLE_FOR_TEST or not MODULE_LANGCHAIN_AVAILABLE:
+        pytest.skip("LiteLLM not available for API error tests.")
+
+    mock_litellm_completion.side_effect = exception_type(error_message_detail)
+
+    test_series = pd.Series(["This should cause an API error."])
+    with patch('builtins.print') as mock_print:
+        result_df = npt_llm_instance.analyze_sentiment_llm(test_series, model="error/model", api_key="key")
+
+    assert len(result_df) == 1
+    assert result_df.iloc[0]["sentiment"] == "error"
+    assert error_message_detail in result_df.iloc[0]["raw_llm_output"]
+
+    # Check that the specific exception type (or its name) is mentioned in the raw output or print
+    # This helps confirm that the error is being caught and reported with some context.
+    # For a generic Exception, its string representation might just be the message.
+    exception_name_in_output = isinstance(exception_type(error_message_detail), litellm.exceptions.APIConnectionError) or \
+                               isinstance(exception_type(error_message_detail), litellm.exceptions.AuthenticationError) or \
+                               isinstance(exception_type(error_message_detail), litellm.exceptions.RateLimitError) or \
+                               isinstance(exception_type(error_message_detail), litellm.exceptions.BadRequestError)
+
+    if exception_name_in_output:
+         # For specific LiteLLM errors, the class name might be part of the string representation
+        assert exception_type.__name__ in result_df.iloc[0]["raw_llm_output"]
+
+    printed_output_str = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
+    assert "Error analyzing sentiment for text" in printed_output_str
+    assert error_message_detail in printed_output_str
+
+
+def test_analyze_sentiment_llm_invalid_prompt_template(npt_llm_instance):
+    """Tests behavior with an invalid prompt template (missing {text})."""
+    if not MODULE_LANGCHAIN_AVAILABLE: # LITELLM_AVAILABLE in core
+        pytest.skip("LiteLLM not available.")
+
+    test_series = pd.Series(["Some text"])
+    invalid_prompt = "This prompt is missing the placeholder."
+    with patch('builtins.print') as mock_print:
+        result_df = npt_llm_instance.analyze_sentiment_llm(
+            test_series,
+            model="any/model",
+            prompt_template_str=invalid_prompt
+        )
+
+    assert len(result_df) == 1
+    assert result_df.iloc[0]["sentiment"] == "error"
+    assert "Prompt template error: missing {text}" in result_df.iloc[0]["raw_llm_output"]
+    mock_print.assert_any_call("Error: Prompt template must include '{text}' placeholder.")
+
+
+@patch('litellm.completion')
+def test_analyze_sentiment_llm_empty_text_in_series(mock_litellm_completion, npt_llm_instance):
+    """Tests that empty strings in series are handled correctly (e.g., marked neutral, no LLM call)."""
+    if not MODULE_LANGCHAIN_AVAILABLE:
+        pytest.skip("LiteLLM not available.")
+
+    test_series = pd.Series(["Good text", "", "   ", None, "Bad text"]) # Include None and whitespace
+
+    # Mock LLM to see if it's called for non-empty texts
+    mock_litellm_completion.side_effect = [
+        MagicMock(choices=[MagicMock(message=MagicMock(content="positive"))]), # For "Good text"
+        MagicMock(choices=[MagicMock(message=MagicMock(content="negative"))]), # For "Bad text"
+    ]
+
+    result_df = npt_llm_instance.analyze_sentiment_llm(test_series, model="test/model")
+
+    assert len(result_df) == 5
+    assert result_df.iloc[0]["sentiment"] == "positive"
+    assert result_df.iloc[0]["raw_llm_output"] == "positive" # Assuming direct LLM output
+
+    assert result_df.iloc[1]["sentiment"] == "neutral" # Empty string
+    assert "Input text was empty or whitespace" in result_df.iloc[1]["raw_llm_output"]
+
+    assert result_df.iloc[2]["sentiment"] == "neutral" # Whitespace string
+    assert "Input text was empty or whitespace" in result_df.iloc[2]["raw_llm_output"]
+
+    assert result_df.iloc[3]["sentiment"] == "neutral" # None value
+    assert "Input text was empty or whitespace" in result_df.iloc[3]["raw_llm_output"]
+
+    assert result_df.iloc[4]["sentiment"] == "negative"
+    assert result_df.iloc[4]["raw_llm_output"] == "negative"
+
+    # LLM should only be called for "Good text" and "Bad text"
+    assert mock_litellm_completion.call_count == 2
 ```
-
-この新しいテストファイル `tests/test_nlplot_llm_sentiment.py` を作成しました。
-最初のテスト `test_analyze_sentiment_llm_initial_method_missing` が、`analyze_sentiment_llm` メソッドが存在しないことによる `AttributeError` を期待する Red フェーズのテストとなります。
-
-他のテストケースは、メソッドのスタブが作られた後、具体的な機能を実装する際のRed/Green/Refactorサイクルで使用します。
-
-次のステップは、`nlplot.py` に `analyze_sentiment_llm` メソッドの空のスタブを追加することです。

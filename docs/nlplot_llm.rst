@@ -1,13 +1,13 @@
-nlplot package
-==============
+nlplot_llm package
+==================
 
 Submodules
 ----------
 
-nlplot.nlplot module
---------------------
+nlplot_llm.core module
+----------------------
 
-.. automodule:: nlplot.nlplot
+.. automodule:: nlplot_llm.core
    :members:
    :undoc-members:
    :show-inheritance:
@@ -15,7 +15,7 @@ nlplot.nlplot module
 Module contents
 ---------------
 
-.. automodule:: nlplot
+.. automodule:: nlplot_llm
    :members:
    :undoc-members:
    :show-inheritance:

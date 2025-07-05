@@ -180,24 +180,110 @@ def test_categorize_text_llm_no_matching_category(mock_litellm_completion, npt_l
 
     result_df = npt_llm_instance_cat.categorize_text_llm(test_series, categories, model=test_model_str, api_key="k")
     assert result_df.iloc[0]["category"] == "unknown"
+    # Check that the raw output from LLM is preserved
+    assert result_df.iloc[0]["raw_llm_output"] == "This text is about general topics."
 
 
 def test_categorize_text_llm_empty_categories_list(npt_llm_instance_cat):
-    if not MODULE_LANGCHAIN_AVAILABLE_CAT:
+    if not MODULE_LANGCHAIN_AVAILABLE_CAT: # This is LITELLM_AVAILABLE in core
         pytest.skip("Core LLM utilities not available.")
     test_series = pd.Series(["Some text."])
     with pytest.raises(ValueError, match="Categories list must be a non-empty list of non-empty strings."):
-        npt_llm_instance_cat.categorize_text_llm(test_series, [], model="any/model", api_key="k")
+        npt_llm_instance_cat.categorize_text_llm(test_series, [], model="any/model")
+
+
+@pytest.mark.parametrize(
+    "exception_type, error_message_detail",
+    [
+        (litellm.exceptions.AuthenticationError, "Simulated LiteLLM Auth Error for categorize"),
+        (litellm.exceptions.RateLimitError, "Simulated LiteLLM Rate Limit Error for categorize"),
+        (litellm.exceptions.APIConnectionError, "Simulated LiteLLM API Connection Error for categorize"),
+        (Exception, "Generic Exception for categorize")
+    ]
+)
+@patch('litellm.completion')
+def test_categorize_text_llm_various_api_errors(mock_litellm_completion, exception_type, error_message_detail, npt_llm_instance_cat):
+    if not LITELLM_AVAILABLE_FOR_TEST_CAT or not MODULE_LANGCHAIN_AVAILABLE_CAT:
+        pytest.skip("LiteLLM not available for API error tests.")
+
+    mock_litellm_completion.side_effect = exception_type(error_message_detail)
+    test_series = pd.Series(["Text to cause error."])
+    categories = ["cat1", "cat2"]
+    category_col_name = "category" # for single_label
+
+    with patch('builtins.print') as mock_print:
+        result_df = npt_llm_instance_cat.categorize_text_llm(
+            test_series, categories, model="error/model", multi_label=False
+        )
+
+    assert len(result_df) == 1
+    assert result_df.iloc[0][category_col_name] == "error"
+    assert error_message_detail in result_df.iloc[0]["raw_llm_output"]
+
+    exception_name_in_output = isinstance(exception_type(error_message_detail), litellm.exceptions.APIConnectionError) or \
+                               isinstance(exception_type(error_message_detail), litellm.exceptions.AuthenticationError) or \
+                               isinstance(exception_type(error_message_detail), litellm.exceptions.RateLimitError)
+    if exception_name_in_output:
+        assert exception_type.__name__ in result_df.iloc[0]["raw_llm_output"]
+
+    printed_output_str = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
+    assert "Error categorizing text" in printed_output_str
+    assert error_message_detail in printed_output_str
+
+
+def test_categorize_text_llm_invalid_prompt_template_no_text(npt_llm_instance_cat):
+    if not MODULE_LANGCHAIN_AVAILABLE_CAT:
+        pytest.skip("LiteLLM not available.")
+
+    test_series = pd.Series(["Some text"])
+    categories = ["cat1"]
+    invalid_prompt = "This prompt is missing {text} placeholder, but has {categories}."
+    with patch('builtins.print') as mock_print:
+        result_df = npt_llm_instance_cat.categorize_text_llm(
+            test_series, categories, model="any/model", prompt_template_str=invalid_prompt
+        )
+
+    assert len(result_df) == 1
+    assert result_df.iloc[0]["category"] == "error" # Assuming single label default
+    assert "Prompt template error: missing {text}" in result_df.iloc[0]["raw_llm_output"]
+    mock_print.assert_any_call("Error: Prompt template must include '{text}' placeholder.")
+
+# Note: The categorize_text_llm method has internal logic to create a default prompt if none is given.
+# That default prompt construction depends on whether {categories} is in the user's prompt_template_str.
+# A test for invalid prompt *with* {text} but missing {categories} when the method expects to inject it might be useful,
+# but the current method logic for default prompts might make this complex to test without over-mocking.
+# The core library should handle its default prompt generation correctly.
+# The main check is if the user provides a bad prompt (e.g. missing {text}).
+
+@patch('litellm.completion')
+def test_categorize_text_llm_empty_and_none_strings_in_series(mock_litellm_completion, npt_llm_instance_cat):
+    if not MODULE_LANGCHAIN_AVAILABLE_CAT:
+        pytest.skip("LiteLLM not available.")
+
+    test_series = pd.Series(["Categorize this", "", "   ", None, "And this too"])
+    categories = ["A", "B"]
+
+    mock_litellm_completion.side_effect = [
+        MagicMock(choices=[MagicMock(message=MagicMock(content="A"))]), # For "Categorize this"
+        MagicMock(choices=[MagicMock(message=MagicMock(content="B"))]), # For "And this too"
+    ]
+
+    result_df = npt_llm_instance_cat.categorize_text_llm(test_series, categories, model="test/model", multi_label=False)
+
+    assert len(result_df) == 5
+    assert result_df.iloc[0]["category"] == "A"
+    assert result_df.iloc[1]["category"] == "unknown" # Empty string, should be 'unknown' or similar, not 'error'
+    assert "Input text was empty or whitespace" in result_df.iloc[1]["raw_llm_output"]
+    assert result_df.iloc[2]["category"] == "unknown" # Whitespace
+    assert "Input text was empty or whitespace" in result_df.iloc[2]["raw_llm_output"]
+    assert result_df.iloc[3]["category"] == "unknown" # None
+    assert "Input text was empty or whitespace" in result_df.iloc[3]["raw_llm_output"]
+    assert result_df.iloc[4]["category"] == "B"
+
+    assert mock_litellm_completion.call_count == 2 # Only for non-empty texts
+
 
 # Additional tests to consider:
-# - test_categorize_text_llm_api_error (similar to sentiment one)
-# - test_categorize_text_llm_custom_prompt
 # - test_categorize_text_llm_llm_returns_invalid_category (not in provided list)
-# - test_categorize_text_llm_empty_text_series
-# - test_categorize_text_llm_text_series_with_none_or_empty_strings
+# - test_categorize_text_llm_empty_text_series (already covered by sentiment tests structure)
 ```
-
-この新しいテストファイル `tests/test_nlplot_llm_categorize.py` を作成しました。
-最初のテスト `test_categorize_text_llm_initial_method_missing` が、`categorize_text_llm` メソッドが存在しないことによる `AttributeError` を期待する Red フェーズのテストとなります。
-
-次のステップは、`nlplot.py` に `categorize_text_llm` メソッドの空のスタブを追加することです。

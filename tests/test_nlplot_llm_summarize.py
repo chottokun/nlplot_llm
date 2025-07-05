@@ -250,3 +250,146 @@ def test_summarize_text_llm_chunking_no_combine_prompt(mock_chunk_text, mock_lit
 # - Test case where chunk_prompt_template_str is invalid.
 # - Test case where combine_prompt_template_str is invalid.
 # - Test case where a chunk summarization fails but others succeed.
+
+@pytest.mark.parametrize(
+    "exception_type, error_message_detail",
+    [
+        (litellm.exceptions.AuthenticationError, "Simulated LiteLLM Auth Error for summarize"),
+        (litellm.exceptions.RateLimitError, "Simulated LiteLLM Rate Limit Error for summarize"),
+        (litellm.exceptions.APIConnectionError, "Simulated LiteLLM API Connection Error for summarize"),
+        (Exception, "Generic Exception for summarize")
+    ]
+)
+@patch('litellm.completion')
+def test_summarize_text_llm_various_api_errors(mock_litellm_completion, exception_type, error_message_detail, npt_llm_summarize_instance):
+    if not LITELLM_AVAILABLE_FOR_TEST_SUMMARIZE or not MODULE_LANGCHAIN_AVAILABLE_SUMMARIZE:
+        pytest.skip("LiteLLM not available for API error tests.")
+
+    mock_litellm_completion.side_effect = exception_type(error_message_detail)
+    test_series = pd.Series(["Text to cause error in summarization."])
+
+    with patch('builtins.print') as mock_print:
+        result_df = npt_llm_summarize_instance.summarize_text_llm(
+            test_series, model="error/model", use_chunking=False # Test direct summarization error
+        )
+
+    assert len(result_df) == 1
+    assert result_df.iloc[0]["summary"] == "error"
+    assert error_message_detail in result_df.iloc[0]["raw_llm_output"]
+
+    exception_name_in_output = isinstance(exception_type(error_message_detail), litellm.exceptions.APIConnectionError) or \
+                               isinstance(exception_type(error_message_detail), litellm.exceptions.AuthenticationError) or \
+                               isinstance(exception_type(error_message_detail), litellm.exceptions.RateLimitError)
+    if exception_name_in_output:
+        assert exception_type.__name__ in result_df.iloc[0]["raw_llm_output"]
+
+    printed_output_str = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
+    assert "Error during direct summarization" in printed_output_str # Check specific error context
+    assert error_message_detail in printed_output_str
+
+
+def test_summarize_text_llm_invalid_direct_prompt(npt_llm_summarize_instance):
+    if not MODULE_LANGCHAIN_AVAILABLE_SUMMARIZE:
+        pytest.skip("LiteLLM not available.")
+
+    test_series = pd.Series(["Some text"])
+    invalid_prompt = "This prompt is missing the required placeholder."
+    with patch('builtins.print') as mock_print:
+        result_df = npt_llm_summarize_instance.summarize_text_llm(
+            test_series, model="any/model", use_chunking=False, prompt_template_str=invalid_prompt
+        )
+
+    assert len(result_df) == 1
+    assert result_df.iloc[0]["summary"] == "error_prompt_direct"
+    assert "Direct prompt error" in result_df.iloc[0]["raw_llm_output"]
+    mock_print.assert_any_call("Error: Direct summarization prompt template must include '{text}' placeholder.")
+
+
+@patch('nlplot_llm.core.NLPlotLLM._chunk_text') # Mock chunking to focus on prompt error
+def test_summarize_text_llm_invalid_chunk_prompt(mock_chunk_text, npt_llm_summarize_instance):
+    if not MODULE_LANGCHAIN_AVAILABLE_SUMMARIZE:
+        pytest.skip("LiteLLM not available.")
+
+    mock_chunk_text.return_value = ["chunk1", "chunk2"] # Simulate some chunks
+    test_series = pd.Series(["Some long text"])
+    invalid_chunk_prompt = "This chunk prompt is invalid."
+
+    with patch('litellm.completion'): # Mock litellm to prevent actual calls
+        result_df = npt_llm_summarize_instance.summarize_text_llm(
+            test_series, model="any/model", use_chunking=True, chunk_prompt_template_str=invalid_chunk_prompt
+        )
+
+    assert len(result_df) == 1
+    assert result_df.iloc[0]["summary"] == "error_prompt_chunk"
+    assert "Chunk prompt template error: missing {text}" in result_df.iloc[0]["raw_llm_output"]
+
+
+@patch('nlplot_llm.core.NLPlotLLM._chunk_text')
+@patch('litellm.completion')
+def test_summarize_text_llm_invalid_combine_prompt(mock_litellm_completion, mock_chunk_text, npt_llm_summarize_instance):
+    if not MODULE_LANGCHAIN_AVAILABLE_SUMMARIZE:
+        pytest.skip("LiteLLM not available.")
+
+    mock_chunk_text.return_value = ["chunk1 text", "chunk2 text"]
+    # Simulate successful chunk summaries
+    mock_litellm_completion.side_effect = [
+        MagicMock(choices=[MagicMock(message=MagicMock(content="Summary of chunk1."))]),
+        MagicMock(choices=[MagicMock(message=MagicMock(content="Summary of chunk2."))]),
+        # The combine call will use the invalid prompt, but we don't need to mock its response
+        # as the error should be caught before or during the call.
+        # However, the current implementation prints a warning and uses intermediate if combine prompt is bad.
+    ]
+
+    test_series = pd.Series(["A very long text that needs chunking and combining."])
+    invalid_combine_prompt = "This combine prompt is invalid (no {text})."
+
+    with patch('builtins.print') as mock_print:
+        result_df = npt_llm_summarize_instance.summarize_text_llm(
+            test_series,
+            model="any/model",
+            use_chunking=True,
+            chunk_prompt_template_str="Summarize: {text}", # Valid chunk prompt
+            combine_prompt_template_str=invalid_combine_prompt
+        )
+
+    assert len(result_df) == 1
+    # Current behavior: if combine_prompt is invalid, it uses the concatenated chunk summaries.
+    expected_intermediate_summary = "Summary of chunk1.\n\nSummary of chunk2."
+    assert result_df.iloc[0]["summary"] == expected_intermediate_summary
+
+    printed_output = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
+    assert "Warning: combine_prompt_template_str does not contain '{text}'. Using combined chunk summaries directly." in printed_output
+    assert "Final Combined Summary Raw:" not in result_df.iloc[0]["raw_llm_output"] # Combine call should not have happened effectively
+
+
+@patch('litellm.completion')
+@patch('nlplot_llm.core.LANGCHAIN_SPLITTERS_AVAILABLE', False) # Simulate splitters not available
+def test_summarize_text_llm_chunking_true_but_splitters_unavailable(mock_litellm_completion, npt_llm_summarize_instance):
+    if not MODULE_LANGCHAIN_AVAILABLE_SUMMARIZE:
+        pytest.skip("LiteLLM not available.")
+
+    test_text = "This is some text that would normally be chunked."
+    test_series = pd.Series([test_text])
+    expected_direct_summary = "Direct summary because chunking failed."
+
+    # Mock litellm.completion for the fallback direct summarization call
+    mock_litellm_completion.return_value = MagicMock(choices=[MagicMock(message=MagicMock(content=expected_direct_summary))])
+
+    with patch('builtins.print') as mock_print:
+        result_df = npt_llm_summarize_instance.summarize_text_llm(
+            test_series, model="any/model", use_chunking=True # Attempt chunking
+        )
+
+    assert len(result_df) == 1
+    assert result_df.iloc[0]["summary"] == expected_direct_summary
+    assert "Chunking skipped (splitters unavailable). Direct summary raw:" in result_df.iloc[0]["raw_llm_output"]
+
+    printed_output = "".join(call.args[0] for call in mock_print.call_args_list if call.args)
+    assert "Warning: Langchain text splitters not available for chunking. Attempting direct summarization." in printed_output
+
+    # Ensure litellm.completion was called once for the direct summarization
+    mock_litellm_completion.assert_called_once()
+    args, kwargs = mock_litellm_completion.call_args
+    # Check if the prompt used was the default direct summarization prompt
+    assert "Please summarize the following text concisely: {text}".format(text=test_text) in kwargs['messages'][0]['content']
+```

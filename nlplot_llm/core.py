@@ -36,49 +36,15 @@ except ImportError:
             return []
     # class JanomeToken: pass
 
-# Langchain related imports are being replaced by LiteLLM
-# try:
-#     from langchain_openai import ChatOpenAI
-#     from langchain_community.chat_models.ollama import OllamaChat
-#     from langchain_core.language_models.chat_models import BaseChatModel
-#     from langchain_core.prompts import PromptTemplate
-#     from langchain_core.outputs import AIMessage
-#     from langchain_text_splitters import RecursiveCharacterTextSplitter, CharacterTextSplitter
-#     LANGCHAIN_AVAILABLE = True
-# except ImportError:
-#     LANGCHAIN_AVAILABLE = False
-#     class ChatOpenAI: pass # type: ignore
-#     class OllamaChat: pass # type: ignore
-#     class BaseChatModel: pass # type: ignore
-#     class PromptTemplate: pass # type: ignore
-#     class AIMessage(dict): # type: ignore # Adjusted to allow .content access if used as dict
-#         def __init__(self, content="", **kwargs):
-#             super().__init__(kwargs)
-#             self.content = content
-#         def __getattr__(self, name): # Allow attribute access for 'content'
-#             if name == 'content': return self._content_attr
-#             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-#         def __setattr__(self, name, value):
-#             if name == 'content': self._content_attr = value
-#             else: super().__setattr__(name, value)
-
-#     class RecursiveCharacterTextSplitter: # type: ignore
-#         def __init__(self, chunk_size=None, chunk_overlap=None, length_function=None, **kwargs): pass
-#         def split_text(self, text: str) -> List[str]: return [text] if text else []
-#     class CharacterTextSplitter: # type: ignore
-#         def __init__(self, separator=None, chunk_size=None, chunk_overlap=None, length_function=None, **kwargs): pass
-#         def split_text(self, text: str) -> List[str]: return [text] if text else []
-
-# LiteLLM and potentially Langchain TextSplitters if still needed
+# LiteLLM and Langchain TextSplitters
 try:
     import litellm
-    # We might still use Langchain's text splitters as they are general purpose
     from langchain_text_splitters import RecursiveCharacterTextSplitter, CharacterTextSplitter
     LITELLM_AVAILABLE = True
-    LANGCHAIN_SPLITTERS_AVAILABLE = True # Keep a separate flag for splitters
+    LANGCHAIN_SPLITTERS_AVAILABLE = True
 except ImportError:
     LITELLM_AVAILABLE = False
-    LANGCHAIN_SPLITTERS_AVAILABLE = False # If either fails, assume splitters might also not be there or not useful
+    LANGCHAIN_SPLITTERS_AVAILABLE = False
     # Dummy class for litellm if not installed, to prevent NameError on checks
     class litellm_dummy: # type: ignore
         def completion(self, *args, **kwargs): raise ImportError("litellm is not installed.")
@@ -506,8 +472,9 @@ class NLPlotLLM():
             temperature (float, optional): Temperature for LLM generation. Defaults to 0.0.
             **litellm_kwargs: Additional keyword arguments to pass directly to `litellm.completion`.
                               This can include provider-specific parameters like `api_key`, `api_base`,
-                              `max_tokens`, `top_p`, etc. Refer to LiteLLM documentation for details.
-                              Example: `api_key="sk-..."`, `api_base="http://localhost:11434"`.
+                              `max_tokens`, `top_p`, `frequency_penalty`, `presence_penalty`, etc.
+                              Refer to LiteLLM documentation for details.
+                              Example: `api_key="sk-..."`, `api_base="http://localhost:11434"`, `max_tokens=50`.
 
         Returns:
             pd.DataFrame: DataFrame with columns ["text", "sentiment", "raw_llm_output"].
@@ -636,8 +603,11 @@ class NLPlotLLM():
                                         The output 'category' column will be a string.
                                         Defaults to False.
             temperature (float, optional): Temperature for LLM generation. Defaults to 0.0.
-            **litellm_kwargs: Additional keyword arguments for `litellm.completion`
-                              (e.g., `api_key`, `api_base`, `max_tokens`).
+            **litellm_kwargs: Additional keyword arguments to pass directly to `litellm.completion`.
+                              This can include provider-specific parameters like `api_key`, `api_base`,
+                              `max_tokens`, `top_p`, `frequency_penalty`, `presence_penalty`, etc.
+                              Refer to LiteLLM documentation for details.
+                              Example: `api_key="sk-..."`, `api_base="http://localhost:11434"`, `max_tokens=100`.
 
         Returns:
             pd.DataFrame: DataFrame with columns ["text", category_col_name, "raw_llm_output"].
@@ -797,8 +767,8 @@ class NLPlotLLM():
         (TDD Cycle 4 - Stub/Initial Implementation)
         Splits a long text into smaller chunks using Langchain TextSplitters.
         """
-        if not LANGCHAIN_AVAILABLE:
-            print("Warning: Langchain or its text splitter components are not installed. Chunking will not be performed; returning original text as a single chunk.")
+        if not LANGCHAIN_SPLITTERS_AVAILABLE:
+            print("Warning: Langchain text splitter components are not installed. Chunking will not be performed; returning original text as a single chunk.")
             return [text_to_chunk] if text_to_chunk else [] # Return list for consistency
 
         if not text_to_chunk: # Handles empty string, None, etc.
@@ -861,8 +831,7 @@ class NLPlotLLM():
     def summarize_text_llm(
         self,
         text_series: pd.Series,
-        llm_provider: str,
-        model_name: str,
+        model: str, # Unified model string for LiteLLM
         prompt_template_str: Optional[str] = None,
         chunk_prompt_template_str: Optional[str] = None, # For individual chunks
         combine_prompt_template_str: Optional[str] = None, # For combining summaries of chunks
@@ -872,18 +841,18 @@ class NLPlotLLM():
         use_chunking: bool = True, # Whether to use chunking for long texts
         chunk_size: int = 1000,    # Default chunk size for summarization
         chunk_overlap: int = 100,  # Default chunk overlap
-        **litellm_kwargs # Renamed
+        **litellm_kwargs
     ) -> pd.DataFrame:
         """
-        Summarizes texts using a specified LLM via LiteLLM. # Updated
+        Summarizes texts using a specified LLM via LiteLLM.
         Can handle long texts by chunking, summarizing parts, and optionally combining those summaries.
 
         Args:
             text_series (pd.Series): Series containing texts to summarize.
-            model (str): The LiteLLM model string (e.g., "openai/gpt-3.5-turbo", "ollama/llama2"). # Updated
+            model (str): The LiteLLM model string (e.g., "openai/gpt-3.5-turbo", "ollama/llama2", "azure/your-deployment").
             prompt_template_str (Optional[str], optional): Prompt template for summarizing
                 texts directly (when `use_chunking` is False). Must include "{text}".
-                Defaults to "Please summarize the following text: {text}".
+                Defaults to "Please summarize the following text concisely: {text}".
             chunk_prompt_template_str (Optional[str], optional): Prompt template for
                 summarizing individual chunks (when `use_chunking` is True). Must include "{text}".
                 Defaults to "Summarize this text: {text}".
@@ -892,11 +861,14 @@ class NLPlotLLM():
                 (when `use_chunking` is True and more than one chunk exists). Must include "{text}"
                 which will be filled with the concatenation of chunk summaries.
                 If None, chunk summaries are simply joined with newlines. Defaults to None.
-            max_length (Optional[int], optional): Placeholder for future use, intended for
-                LLMs that support explicit max summary length. Currently not directly enforced
-                by this method's core logic but passed in `llm_config` if provider supports it.
+            max_length (Optional[int], optional): Intended to influence the maximum length of the generated summary.
+                If provided, it is passed as `max_tokens` to `litellm.completion` unless `max_tokens` is already
+                present in `litellm_kwargs`. Note that the exact behavior is LLM provider-dependent.
+                It's generally recommended to use `max_tokens` directly within `litellm_kwargs` for more explicit control.
                 Defaults to None.
-            min_length (Optional[int], optional): Placeholder for future use, similar to `max_length`.
+            min_length (Optional[int], optional): Placeholder for desired minimum summary length.
+                Currently not directly enforced by this method or easily mapped to a generic LiteLLM parameter.
+                Behavior is LLM provider-dependent if such a parameter exists for the chosen model.
                 Defaults to None.
             temperature (float, optional): Temperature for LLM generation. Defaults to 0.0.
             use_chunking (bool, optional): Whether to split long texts into chunks for summarization.
@@ -905,8 +877,11 @@ class NLPlotLLM():
                 Defaults to 1000.
             chunk_overlap (int, optional): The character overlap between text chunks when `use_chunking` is True.
                 Defaults to 100.
-            **llm_config: Additional keyword arguments for the LLM client
-                          (e.g., `openai_api_key`, `base_url` which LiteLLM uses as `api_key`, `api_base`).
+            **litellm_kwargs: Additional keyword arguments to pass directly to `litellm.completion`.
+                              This can include provider-specific parameters like `api_key`, `api_base`,
+                              `max_tokens`, `top_p`, `frequency_penalty`, `presence_penalty`, etc.
+                              Refer to LiteLLM documentation for details.
+                              Example: `api_key="sk-..."`, `api_base="http://localhost:11434"`, `max_tokens=150`.
 
         Returns:
             pd.DataFrame: DataFrame with columns ["original_text", "summary", "raw_llm_output"].
@@ -1133,11 +1108,11 @@ if __name__ == '__main__':
         "This is the worst experience I have ever had.",
         "The weather today is just okay, nothing special."
     ])
-    if LANGCHAIN_AVAILABLE:
+    if LITELLM_AVAILABLE:
         try:
-            # Test with OpenAI (requires OPENAI_API_KEY env var)
+            # Test with OpenAI (requires OPENAI_API_KEY env var or passed in litellm_kwargs)
             # sentiment_results_openai = npt_main.analyze_sentiment_llm(
-            #     sentiment_texts, llm_provider="openai", model_name="gpt-3.5-turbo"
+            #     sentiment_texts, model="openai/gpt-3.5-turbo"
             # )
             # print("\\nOpenAI Sentiment Results:")
             # print(sentiment_results_openai)
@@ -1147,7 +1122,7 @@ if __name__ == '__main__':
             # And pull a model if you haven't: `ollama pull llama2`
             print("\\nAttempting Ollama Sentiment Analysis (ensure Ollama is running)...")
             sentiment_results_ollama = npt_main.analyze_sentiment_llm(
-                 sentiment_texts, llm_provider="ollama", model_name="llama2" # or another model like "mistral"
+                 sentiment_texts, model="ollama/llama2" # or another model like "ollama/mistral"
             )
             print("\\nOllama Sentiment Results:")
             print(sentiment_results_ollama)
@@ -1155,7 +1130,7 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"Error during sentiment analysis test: {e}")
     else:
-        print("Skipping sentiment analysis test as Langchain is not available.")
+        print("Skipping sentiment analysis test as LiteLLM is not available.")
 
     # --- Test Text Categorization ---
     print("\\n--- Testing Text Categorization ---")
@@ -1165,19 +1140,19 @@ if __name__ == '__main__':
         "The Federal Reserve announced an increase in interest rates to combat inflation."
     ])
     categories_list = ["technology", "sports", "finance", "health"]
-    if LANGCHAIN_AVAILABLE:
+    if LITELLM_AVAILABLE:
         try:
             # Test with Ollama
             print("\\nAttempting Ollama Categorization (ensure Ollama is running)...")
             categorization_results_ollama = npt_main.categorize_text_llm(
-                categorization_texts, categories_list, llm_provider="ollama", model_name="llama2", multi_label=True
+                categorization_texts, categories_list, model="ollama/llama2", multi_label=True
             )
             print("\\nOllama Categorization Results (Multi-label):")
             print(categorization_results_ollama)
         except Exception as e:
             print(f"Error during categorization test: {e}")
     else:
-        print("Skipping categorization test as Langchain is not available.")
+        print("Skipping categorization test as LiteLLM is not available.")
 
     # --- Test Text Summarization ---
     print("\\n--- Testing Text Summarization ---")
@@ -1185,12 +1160,12 @@ if __name__ == '__main__':
         "The history of artificial intelligence (AI) began in antiquity, with myths, stories and rumors of artificial beings endowed with intelligence or consciousness by master craftsmen. Modern AI predicates on the formalization of reasoning by philosophers in the first millennium BCE. The seeds of modern AI were planted by classical philosophers who attempted to describe the process of human thinking as the mechanical manipulation of symbols. This work culminated in the invention of the programmable digital computer in the 1940s, a machine based on the abstract essence of mathematical reasoning. This device and the ideas behind it inspired a handful of scientists to begin seriously discussing the possibility of building an electronic brain.",
         "The quick brown fox jumps over the lazy dog. This sentence is famous because it contains all the letters of the English alphabet. It is often used for testing typewriters and keyboards. The origin of the sentence is not entirely clear, but it has been in use for a long time. It's a classic pangram."
     ])
-    if LANGCHAIN_AVAILABLE:
+    if LITELLM_AVAILABLE:
         try:
             # Test with Ollama (chunking enabled by default)
             print("\\nAttempting Ollama Summarization with Chunking (ensure Ollama is running)...")
             summarization_results_ollama_chunked = npt_main.summarize_text_llm(
-                summarization_texts, llm_provider="ollama", model_name="llama2",
+                summarization_texts, model="ollama/llama2",
                 chunk_size=200, chunk_overlap=50 # Smaller chunks for testing
             )
             print("\\nOllama Summarization Results (Chunked):")
@@ -1200,7 +1175,7 @@ if __name__ == '__main__':
             print("\\nAttempting Ollama Summarization (Direct, No Chunking)...")
             summarization_results_ollama_direct = npt_main.summarize_text_llm(
                 pd.Series([summarization_texts.iloc[1]]), # Take a shorter one for direct
-                llm_provider="ollama", model_name="llama2",
+                model="ollama/llama2",
                 use_chunking=False
             )
             print("\\nOllama Summarization Results (Direct):")
@@ -1209,7 +1184,7 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"Error during summarization test: {e}")
     else:
-        print("Skipping summarization test as Langchain is not available.")
+        print("Skipping summarization test as LiteLLM is not available.")
 
     print("\\n--- NLPlotLLM Basic Tests Complete ---")
     # Example of a traditional nlplot feature
