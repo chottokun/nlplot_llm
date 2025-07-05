@@ -9,3 +9,9 @@ pillow
 networkx
 ipython
 scikit-learn
+janome
+litellm
+# langchain
+# langchain-openai
+# langchain-community
+# openai
