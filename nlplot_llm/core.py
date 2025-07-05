@@ -494,6 +494,25 @@ class NLPlotLLM():
     ) -> pd.DataFrame:
         """
         Analyzes sentiment of texts using a specified LLM via LiteLLM.
+
+        Args:
+            text_series (pd.Series): Series containing texts to analyze.
+            model (str): The LiteLLM model string, identifying the provider and model
+                         (e.g., "openai/gpt-3.5-turbo", "ollama/llama2", "azure/your-deployment-name").
+            prompt_template_str (Optional[str], optional): Custom prompt template string.
+                Must include "{text}" placeholder.
+                Defaults to a standard sentiment analysis prompt:
+                "Analyze the sentiment of the following text and classify it as 'positive', 'negative', or 'neutral'. Return only the single word classification for the sentiment. Text: {text}".
+            temperature (float, optional): Temperature for LLM generation. Defaults to 0.0.
+            **litellm_kwargs: Additional keyword arguments to pass directly to `litellm.completion`.
+                              This can include provider-specific parameters like `api_key`, `api_base`,
+                              `max_tokens`, `top_p`, etc. Refer to LiteLLM documentation for details.
+                              Example: `api_key="sk-..."`, `api_base="http://localhost:11434"`.
+
+        Returns:
+            pd.DataFrame: DataFrame with columns ["text", "sentiment", "raw_llm_output"].
+                          "sentiment" can be "positive", "negative", "neutral", "unknown", or "error".
+                          "raw_llm_output" contains the direct string content from the LLM response or error details.
         """
         if not LITELLM_AVAILABLE:
             print("Warning: LiteLLM is not installed. LLM-based sentiment analysis is not available.")
@@ -601,7 +620,30 @@ class NLPlotLLM():
         **litellm_kwargs # Renamed from llm_config
     ) -> pd.DataFrame:
         """
-        Categorizes texts using a specified LLM via LiteLLM.
+        Categorizes texts into predefined categories using a specified LLM via LiteLLM.
+
+        Args:
+            text_series (pd.Series): Series containing texts to categorize.
+            categories (List[str]): A list of predefined category names.
+            model (str): The LiteLLM model string (e.g., "openai/gpt-3.5-turbo").
+            prompt_template_str (Optional[str], optional): Custom prompt template.
+                Must include "{text}". Can also include "{categories}" for the list of categories,
+                which will be formatted as a comma-separated string of category names.
+                Defaults to a standard categorization prompt that varies based on `multi_label`.
+            multi_label (bool, optional): If True, allows multiple categories per text.
+                                        The output 'categories' column will be a list of strings.
+                                        If False, assigns a single category per text.
+                                        The output 'category' column will be a string.
+                                        Defaults to False.
+            temperature (float, optional): Temperature for LLM generation. Defaults to 0.0.
+            **litellm_kwargs: Additional keyword arguments for `litellm.completion`
+                              (e.g., `api_key`, `api_base`, `max_tokens`).
+
+        Returns:
+            pd.DataFrame: DataFrame with columns ["text", category_col_name, "raw_llm_output"].
+                          `category_col_name` is "categories" (List[str]) if multi_label is True,
+                          else "category" (str).
+                          Categorization can be one of the provided categories, "unknown", or "error".
         """
         category_col_name = "categories" if multi_label else "category"
         default_columns = ["text", category_col_name, "raw_llm_output"]
