@@ -11,6 +11,7 @@ ipython
 scikit-learn
 janome
 litellm
+diskcache>=5.0.0 # Added diskcache for LLM response caching
 # langchain
 # langchain-openai
 # langchain-community

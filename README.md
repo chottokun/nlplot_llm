@@ -14,10 +14,12 @@ nlplot_llm: Enhanced Natural Language Processing analysis and visualization with
     - **Text Summarization:** Generate summaries of texts, with support for chunking long documents.
     - Access to 100+ LLMs (OpenAI, Azure, Ollama, Cohere, Anthropic, etc.) through a unified interface via LiteLLM.
 - **Customizable Prompts:** Easily customize prompts for all LLM-powered analyses.
+- **LLM Response Caching:** Built-in support for caching LLM API responses to save costs and speed up repeated analyses (uses `diskcache`).
+- **Asynchronous Operations:** Provides asynchronous versions of LLM analysis methods (`*_async`) for improved performance with multiple texts.
 - **Text Chunking:** Helper methods for splitting long texts, useful for LLM preprocessing (uses Langchain TextSplitters).
 
 ## Description
-`nlplot_llm` extends the original `nlplot` library by integrating robust LLM capabilities through LiteLLM. This allows for advanced text analysis tasks like sentiment analysis, categorization, and summarization across a wide range of language models—with customizable prompts—while retaining useful NLP visualizations.
+`nlplot_llm` extends the original `nlplot` library by integrating robust LLM capabilities through LiteLLM. This allows for advanced text analysis tasks like sentiment analysis, categorization, and summarization across a wide range of language models—with customizable prompts, response caching, and asynchronous operations—while retaining useful NLP visualizations.
 
 You can draw the following graph
 
@@ -35,6 +37,7 @@ You can draw the following graph
 - Core dependencies: `pandas`, `numpy`, `plotly>=4.12.0`, `matplotlib`, `wordcloud`, `pillow`, `networkx`, `seaborn`, `tqdm`.
 - For Japanese text features: `janome`.
 - For LLM-based features: `litellm>=1.0` (core dependency).
+- For LLM response caching: `diskcache>=5.0.0` (core dependency).
 - For text chunking (used by LLM features): `langchain-text-splitters` (core dependency).
 See `requirements.txt` for full details.
 
@@ -42,7 +45,7 @@ See `requirements.txt` for full details.
 ```sh
 pip install nlplot_llm
 ```
-This will install `nlplot_llm` along with its core dependencies, including `litellm` and `langchain-text-splitters`.
+This will install `nlplot_llm` along with its core dependencies, including `litellm`, `diskcache`, and `langchain-text-splitters`.
 For Japanese text analysis, `janome` is required (install separately if needed: `pip install janome`).
 
 I've posted on [this blog](https://www.takapy.work/entry/2020/05/17/192947) about the specific use of the original nlplot. (Japanese)
@@ -93,10 +96,10 @@ texts = [
 df = pd.DataFrame({target_col: texts})
 
 # Initialize NLPlotLLM
-# Font handling has changed: nlplot_llm no longer bundles a default font.
-# Provide a valid font_path or ensure system fonts are available for wordcloud.
-# npt = NLPlotLLM(df, target_col='text', font_path='/path/to/your/font.ttf')
-npt = NLPlotLLM(df, target_col='text')
+# Font handling: Provide a valid font_path or ensure system fonts are available for wordcloud.
+# Caching: LLM responses are cached by default. Customize via use_cache, cache_dir, etc.
+# npt = NLPlotLLM(df, target_col='text', font_path='/path/to/your/font.ttf', use_cache=False)
+npt = NLPlotLLM(df, target_col='text') # Uses default font logic and default caching (enabled)
 
 # Stopword calculations can be performed.
 # These stopwords will be automatically used by plotting methods unless overridden.
@@ -187,19 +190,20 @@ else:
 Leverage a wide range of Large Language Models (LLMs) for sentiment analysis, text categorization, and summarization. `nlplot_llm` uses [LiteLLM](https://litellm.ai/) to provide a unified interface to over 100 LLM providers.
 
 **Important Notes:**
-- Ensure `litellm` is installed (it's a core dependency of `nlplot_llm`).
-- Depending on the LLM provider you choose (e.g., OpenAI, Azure, Cohere, Anthropic), you'll need to set up appropriate API keys or environment variables as per LiteLLM's documentation. For example, for OpenAI models, set `OPENAI_API_KEY`. For Ollama, ensure your Ollama server is running.
-- Using cloud LLMs may incur costs.
+- **Dependencies:** Ensure `litellm`, `diskcache`, and `langchain-text-splitters` are installed (they are core dependencies).
+- **LLM Configuration:** Depending on the LLM provider (e.g., OpenAI, Azure, Ollama), set up API keys or environment variables as per LiteLLM's documentation. For example, set `OPENAI_API_KEY` for OpenAI models. For local models like Ollama, ensure the server is running.
+- **Costs:** Using cloud-based LLMs may incur costs.
+- **Caching:** LLM responses are cached by default to `./.cache/nlplot_llm`. You can customize this via `NLPlotLLM` constructor arguments (`use_cache`, `cache_dir`, `cache_expire`, `cache_size_limit`) or disable it per-method call with `use_cache=False`.
 
 ### LLM Sentiment Analysis
 ```python
-from nlplot_llm import NLPlotLLM # Ensure you have this import
+from nlplot_llm import NLPlotLLM
 import pandas as pd
-# from nlplot_llm.core import LITELLM_AVAILABLE # Optional: to check if LiteLLM was imported by the library
+import asyncio # For async examples
 
-# Initialize NLPlotLLM (replace with your actual DataFrame and target column)
-sample_df_for_api = pd.DataFrame({'text_col': ["Initial text for NLPlotLLM."]})
-npt = NLPlotLLM(sample_df_for_api, target_col='text_col')
+# Initialize NLPlotLLM (uses default caching: enabled)
+# npt = NLPlotLLM(df, target_col='text', use_cache=True, cache_dir='./my_custom_cache', cache_expire=3600)
+# For this example, assume 'npt' is already initialized as in the main Quick Start.
 
 sentiment_texts = pd.Series([
     "I love this product, it's absolutely fantastic!",
@@ -207,117 +211,150 @@ sentiment_texts = pd.Series([
     "The weather today is just okay, nothing special."
 ])
 
-# Example with an OpenAI model via LiteLLM
-# Ensure OPENAI_API_KEY environment variable is set, or pass api_key in litellm_kwargs.
+# --- Synchronous Examples ---
+# Example with OpenAI model (ensure OPENAI_API_KEY is set or pass via litellm_kwargs)
 try:
     sentiment_df_openai = npt.analyze_sentiment_llm(
         text_series=sentiment_texts,
-        model="openai/gpt-4o", # Using a newer OpenAI model
-        # litellm_kwargs can be used to pass provider-specific params, e.g., api_key
-        # litellm_kwargs={"api_key": "YOUR_OPENAI_KEY"}
+        model="openai/gpt-4o",
+        # litellm_kwargs={"api_key": "YOUR_KEY"} # Example of passing API key directly
     )
-    print("\\nSentiment Analysis Results (OpenAI gpt-4o via LiteLLM):")
+    print("\\nSentiment Analysis Results (OpenAI gpt-4o):")
     print(sentiment_df_openai)
 except Exception as e:
-    print(f"OpenAI sentiment analysis example failed: {e}")
+    print(f"OpenAI sentiment analysis failed: {e}")
 
-# Example with an Ollama model and custom prompt via LiteLLM
-# Ensure Ollama server is running (e.g., `ollama serve`) and the model is pulled (e.g., `ollama pull gemma`).
-custom_sentiment_prompt = "Given the text, is the author happy, sad, or neutral? Return one word. Text: {text}"
+# Example with Ollama model, custom prompt, and caching disabled for this call
+# Ensure Ollama server is running and 'gemma' model is pulled.
+custom_prompt = "Is this text positive, negative, or neutral? Answer with one word. Text: {text}"
 try:
-    sentiment_df_ollama_custom = npt.analyze_sentiment_llm(
+    sentiment_df_ollama = npt.analyze_sentiment_llm(
         text_series=sentiment_texts,
-        model="ollama/gemma", # Using a newer Ollama model
-        prompt_template_str=custom_sentiment_prompt,
-        litellm_kwargs={"api_base": "http://localhost:11434", "temperature": 0.2} # Specify API base if not default
+        model="ollama/gemma",
+        prompt_template_str=custom_prompt,
+        use_cache=False, # Disable cache for this specific call
+        litellm_kwargs={"temperature": 0.1}
     )
-    print("\\nSentiment Analysis Results (Ollama gemma with custom prompt via LiteLLM):")
-    print(sentiment_df_ollama_custom)
+    print("\\nSentiment Analysis Results (Ollama gemma, custom prompt, no cache):")
+    print(sentiment_df_ollama)
 except Exception as e:
-    print(f"Ollama sentiment analysis example failed: {e}")
+    print(f"Ollama sentiment analysis failed: {e}")
+
+# --- Asynchronous Example ---
+# Requires an async environment (e.g., running within an async function)
+async def main_sentiment_async():
+    try:
+        sentiment_df_async = await npt.analyze_sentiment_llm_async(
+            text_series=sentiment_texts,
+            model="openai/gpt-4o",
+            concurrency_limit=5 # Limit concurrent requests
+        )
+        print("\\nAsync Sentiment Analysis Results (OpenAI gpt-4o):")
+        print(sentiment_df_async)
+    except Exception as e:
+        print(f"Async sentiment analysis failed: {e}")
+
+# if __name__ == "__main__":
+# asyncio.run(main_sentiment_async())
 ```
 
 ### LLM Text Categorization
 ```python
-# Assuming npt is an instance of NLPlotLLM
+# Assuming 'npt' is an initialized NLPlotLLM instance.
 texts_for_categorization = pd.Series([
     "The stock market hit a new record high today.",
     "The local football team secured a dramatic win in the finals.",
-    "Scientists announced a breakthrough in renewable energy research.",
-    "This new AI gadget is great for gaming and office work."
+    "Scientists announced a breakthrough in renewable energy research."
 ])
-defined_categories = ["finance", "sports", "science", "technology", "gaming", "office work"]
-custom_categorize_prompt_single = "Classify the following text into one of these categories: {categories}. Text: {text}. Return only the category name."
-custom_categorize_prompt_multi = "Classify the following text into one or more of these categories: {categories}. Text: {text}. Return a comma-separated list of category names."
+defined_categories = ["finance", "sports", "science", "technology"]
 
+# --- Synchronous Examples ---
 try:
-    # Single-label categorization with an OpenAI model and custom prompt
     cat_single_df = npt.categorize_text_llm(
         text_series=texts_for_categorization,
         categories=defined_categories,
-        model="openai/gpt-4o", # Using a newer OpenAI model
-        prompt_template_str=custom_categorize_prompt_single,
-        multi_label=False,
-        # litellm_kwargs={"api_key": "YOUR_OPENAI_KEY"}
+        model="openai/gpt-4o",
+        multi_label=False
     )
-    print("\\nSingle-label Categorization Results (OpenAI gpt-4o with custom prompt):")
+    print("\\nSingle-label Categorization Results (OpenAI gpt-4o):")
     print(cat_single_df)
 
-    # Multi-label categorization with an Ollama model
-    cat_multi_df = npt.categorize_text_llm(
+    cat_multi_df_ollama = npt.categorize_text_llm(
         text_series=texts_for_categorization,
         categories=defined_categories,
-        model="ollama/gemma", # Using a newer Ollama model
-        prompt_template_str=custom_categorize_prompt_multi, # Using the custom multi-label prompt
+        model="ollama/gemma",
         multi_label=True,
-        litellm_kwargs={"temperature": 0.1}
+        prompt_template_str="Categories: {categories}. Text: {text}. Relevant categories (comma-separated)?",
+        use_cache=True # Explicitly enable cache (though it's default)
     )
-    print("\\nMulti-label Categorization Results (Ollama gemma via LiteLLM):")
-    print(cat_multi_df)
+    print("\\nMulti-label Categorization Results (Ollama gemma, custom prompt):")
+    print(cat_multi_df_ollama)
 except Exception as e:
-    print(f"LLM categorization example failed: {e}")
+    print(f"LLM categorization failed: {e}")
+
+# --- Asynchronous Example ---
+async def main_categorize_async():
+    try:
+        cat_df_async = await npt.categorize_text_llm_async(
+            text_series=texts_for_categorization,
+            categories=defined_categories,
+            model="ollama/gemma",
+            multi_label=True,
+            concurrency_limit=2
+        )
+        print("\\nAsync Multi-label Categorization Results (Ollama gemma):")
+        print(cat_df_async)
+    except Exception as e:
+        print(f"Async categorization failed: {e}")
+
+# if __name__ == "__main__":
+# asyncio.run(main_categorize_async())
 ```
 
 ### LLM Text Summarization
-Generate concise summaries of your texts. Supports chunking for long documents.
 ```python
-# Assuming npt is an instance of NLPlotLLM
+# Assuming 'npt' is an initialized NLPlotLLM instance.
 long_text_series = pd.Series([
-    "This is the first long document. It contains multiple sentences and discusses various topics that need to be condensed into a short summary. The goal is to capture the main essence of this text efficiently. It talks about artificial intelligence, machine learning, and natural language processing.",
-    "Another document here, also quite lengthy. It explores different ideas and presents several arguments. Summarizing this will help in quick understanding. It talks about AI, programming, and the future of technology, including ethical considerations and societal impact."
+    "Artificial intelligence (AI) is rapidly transforming various industries. Its applications range from natural language processing and computer vision to robotics and healthcare. The potential of AI to solve complex problems and drive innovation is immense, but it also raises ethical considerations that need careful attention.",
+    "The global economy is facing a period of uncertainty due to geopolitical tensions and inflationary pressures. Central banks are tightening monetary policies, leading to concerns about a potential recession. Businesses are adapting by focusing on efficiency and resilience."
 ])
-custom_chunk_prompt = "Summarize this section concisely: {text}"
-custom_combine_prompt = "Combine these summaries into a single, coherent narrative: {text}"
 
+# --- Synchronous Example (Chunking with custom prompts) ---
+custom_chunk_prompt = "Briefly summarize this part: {text}"
+custom_combine_prompt = "Combine these summaries into a coherent overview: {text}"
 try:
-    # Summarization with chunking, custom prompts, using an OpenAI model
-    summaries_df = npt.summarize_text_llm(
+    summaries_df_openai = npt.summarize_text_llm(
         text_series=long_text_series,
-        model="openai/gpt-4o", # Using a newer OpenAI model
+        model="openai/gpt-4o",
+        use_chunking=True,
         chunk_prompt_template_str=custom_chunk_prompt,
         combine_prompt_template_str=custom_combine_prompt,
-        # litellm_kwargs={"api_key": "YOUR_OPENAI_KEY", "max_tokens": 150},
-        chunk_size=1000,
-        chunk_overlap=100
+        chunk_size=500, # Smaller chunk for example
+        litellm_kwargs={"max_tokens": 100} # Limit summary length
     )
-    print("\\nLLM Text Summarization Results (OpenAI gpt-4o, Chunked, Custom Prompts):")
-    print(summaries_df)
-
-    # Example of direct summarization (no chunking) with an Ollama model
-    short_text_series = pd.Series(["A very short text to summarize directly without any fuss."])
-    direct_summary_prompt = "Provide a one-sentence summary of: {text}"
-    short_summary_df = npt.summarize_text_llm(
-        text_series=short_text_series,
-        model="ollama/gemma", # Using a newer Ollama model
-        use_chunking=False,
-        prompt_template_str=direct_summary_prompt,
-        litellm_kwargs={"temperature": 0.0}
-    )
-    print("\\nLLM Short Text Summarization (Ollama gemma, No Chunking, Custom Prompt):")
-    print(short_summary_df)
-
+    print("\\nLLM Text Summarization (OpenAI gpt-4o, Chunked, Custom Prompts):")
+    print(summaries_df_openai)
 except Exception as e:
-    print(f"LLM summarization example failed: {e}")
+    print(f"OpenAI summarization failed: {e}")
+
+# --- Asynchronous Example (Direct summarization) ---
+async def main_summarize_async():
+    short_texts = pd.Series(["This is a short text. It should be summarized directly."])
+    try:
+        summaries_df_async = await npt.summarize_text_llm_async(
+            text_series=short_texts,
+            model="ollama/gemma",
+            use_chunking=False, # Direct summarization
+            prompt_template_str="One sentence summary: {text}",
+            concurrency_limit=3
+        )
+        print("\\nAsync Direct Summarization (Ollama gemma):")
+        print(summaries_df_async)
+    except Exception as e:
+        print(f"Async summarization failed: {e}")
+
+# if __name__ == "__main__":
+# asyncio.run(main_summarize_async())
 ```
 
 ### ⚙️ Underlying Helper Methods (Internal)
@@ -347,8 +384,9 @@ A Streamlit demo application, `streamlit_app.py`, is included in the repository 
    ```
 This will open a web interface where you can:
 - Input text for analysis.
-- Specify the LiteLLM model string (e.g., `openai/gpt-3.5-turbo`, `ollama/mistral`, `azure/your-deployment`).
+- Specify the LiteLLM model string (e.g., `openai/gpt-4o`, `ollama/gemma`, `azure/your-deployment`).
 - Adjust common LLM parameters like Temperature and Max Tokens.
+- Enable or disable LLM response caching.
 - Optionally override API Key and API Base URL.
 - Choose an analysis type (Sentiment, Categorization, Summarization).
 - For each analysis type, you can further customize options, including the **prompt templates** used by the LLM.

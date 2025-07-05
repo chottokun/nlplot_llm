@@ -13,11 +13,22 @@ def get_nlplot_llm_instance(): # Updated function name
     # if we are only using LLM methods that take Series directly.
     # However, NLPlotLLM requires a df and target_col for its constructor.
     # We can use a dummy one.
-    dummy_df = pd.DataFrame({'text': ["dummy text for nlplot_llm init"]}) # Updated init text
-    return NLPlotLLM(dummy_df, target_col='text') # Updated class name
+    dummy_df = pd.DataFrame({'text': ["dummy text for nlplot_llm init"]})
+    # Get cache setting from sidebar
+    use_llm_cache = st.session_state.get("use_llm_cache", True) # Default to True if not set
+    return NLPlotLLM(dummy_df, target_col='text', use_cache=use_llm_cache)
 
 # --- Sidebar for LLM Configuration ---
 st.sidebar.header("LLM Configuration (LiteLLM)")
+
+# Cache setting
+st.sidebar.checkbox(
+    "Use LLM Response Cache",
+    value=st.session_state.get("use_llm_cache", True),
+    key="use_llm_cache",
+    help="Enable caching of LLM responses to speed up repeated analyses with the same inputs and parameters. Cache is stored locally."
+)
+st.sidebar.markdown("---") # Visual separator
 
 # Model string input
 model_string = st.sidebar.text_input(

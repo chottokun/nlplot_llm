@@ -22,6 +22,7 @@ from wordcloud import WordCloud
 import networkx as nx
 from networkx.algorithms import community
 from typing import Optional, List, Any
+import asyncio # Added for asynchronous operations
 
 # Default path for Japanese Font, can be overridden
 DEFAULT_FONT_PATH = None
@@ -42,9 +43,12 @@ try:
     from langchain_text_splitters import RecursiveCharacterTextSplitter, CharacterTextSplitter
     LITELLM_AVAILABLE = True
     LANGCHAIN_SPLITTERS_AVAILABLE = True
+    import diskcache
+    DISKCACHE_AVAILABLE = True
 except ImportError:
     LITELLM_AVAILABLE = False
     LANGCHAIN_SPLITTERS_AVAILABLE = False
+    DISKCACHE_AVAILABLE = False
     # Dummy class for litellm if not installed, to prevent NameError on checks
     class litellm_dummy: # type: ignore
         def completion(self, *args, **kwargs): raise ImportError("litellm is not installed.")
@@ -102,7 +106,37 @@ def generate_freq_df(value: pd.Series, n_gram: int = 1, top_n: int = 50, stopwor
 
 class NLPlotLLM():
     def __init__( self, df: pd.DataFrame, target_col: str, output_file_path: str = './',
-                  default_stopwords_file_path: str = '', font_path: str = None):
+                  default_stopwords_file_path: str = '', font_path: str = None,
+                  use_cache: bool = True,
+                  cache_dir: Optional[str] = None,
+                  cache_expire: Optional[int] = None, # seconds, None for no expiration
+                  cache_size_limit: Optional[int] = int(1e9) # bytes, 1GB default
+                ):
+        """
+        Initializes the NLPlotLLM instance.
+
+        Args:
+            df (pd.DataFrame): DataFrame containing the text data.
+            target_col (str): Name of the column in `df` that contains the text to analyze.
+                              The contents of this column are typically tokenized into a list of words
+                              during initialization if they are not already lists.
+            output_file_path (str, optional): Default path to save generated plots and tables.
+                                              Defaults to './'.
+            default_stopwords_file_path (str, optional): Path to a custom file containing default
+                                                         stopwords (one per line). Defaults to ''.
+            font_path (str, optional): Path to a .ttf font file to be used for word clouds.
+                                       If None, WordCloud attempts to use system default fonts.
+                                       Defaults to None.
+            use_cache (bool, optional): Whether to enable caching for LLM responses by default.
+                                        Can be overridden per LLM method call. Defaults to True.
+            cache_dir (Optional[str], optional): Directory to store cache files.
+                                                 If None, defaults to a platform-specific user cache directory
+                                                 (e.g., ~/.cache/nlplot_llm). Defaults to None.
+            cache_expire (Optional[int], optional): Time in seconds after which cached items expire.
+                                                    If None, items do not expire. Defaults to None.
+            cache_size_limit (Optional[int], optional): Maximum size of the cache in bytes.
+                                                        Defaults to 1GB (1e9 bytes).
+        """
         self.df = df.copy()
         self.target_col = target_col
         self.df.dropna(subset=[self.target_col], inplace=True)
@@ -113,8 +147,9 @@ class NLPlotLLM():
         self.font_path = font_path if font_path and os.path.exists(font_path) else DEFAULT_FONT_PATH
         if font_path and not os.path.exists(font_path):
             print(f"Warning: Specified font_path '{font_path}' not found. Falling back to default: {self.font_path}")
-        if not os.path.exists(self.font_path):
+        if not os.path.exists(self.font_path): # This check might need to be more nuanced if self.font_path can be None
             print(f"Warning: The determined font path '{self.font_path}' does not exist. WordCloud may fail if a valid font is not provided at runtime or if the default font is missing.")
+
         self.default_stopwords = []
         if default_stopwords_file_path and os.path.exists(default_stopwords_file_path):
             try:
@@ -123,10 +158,27 @@ class NLPlotLLM():
             except PermissionError: print(f"Warning: Permission denied to read stopwords file '{default_stopwords_file_path}'. Continuing without these default stopwords.")
             except IOError as e: print(f"Warning: Could not read stopwords file '{default_stopwords_file_path}' due to an IO error: {e}. Continuing without these default stopwords.")
             except Exception as e: print(f"Warning: An unexpected error occurred while reading stopwords file '{default_stopwords_file_path}': {e}. Continuing without these default stopwords.")
+
         self._janome_tokenizer = None
         if JANOME_AVAILABLE:
             try: self._janome_tokenizer = JanomeTokenizer()
             except Exception as e: print(f"Warning: Failed to initialize Janome Tokenizer. Japanese text features may not be available. Error: {e}")
+
+        # Cache initialization
+        self.use_cache_default = use_cache
+        self.cache = None
+        if self.use_cache_default and DISKCACHE_AVAILABLE:
+            cache_path = cache_dir if cache_dir else os.path.join(os.path.expanduser("~"), ".cache", "nlplot_llm")
+            try:
+                self.cache = diskcache.Cache(cache_path, size_limit=cache_size_limit, expire=cache_expire)
+                print(f"NLPlotLLM cache initialized at: {cache_path}")
+            except Exception as e:
+                print(f"Warning: Failed to initialize diskcache at {cache_path}. Cache will be disabled. Error: {e}")
+                self.cache = None
+                self.use_cache_default = False # Disable cache if init fails
+        elif self.use_cache_default and not DISKCACHE_AVAILABLE:
+            print("Warning: diskcache library is not installed, but use_cache=True. Caching will be disabled. Please install diskcache.")
+            self.use_cache_default = False
 
     def _tokenize_japanese_text(self, text: str) -> list:
         if not JANOME_AVAILABLE: print("Warning: Janome is not installed. Japanese tokenization is not available. Please install Janome (e.g., pip install janome)."); return []
@@ -456,7 +508,8 @@ class NLPlotLLM():
         model: str, # Changed from llm_provider and model_name to LiteLLM's model string
         prompt_template_str: Optional[str] = None,
         temperature: float = 0.0,
-        **litellm_kwargs # Renamed from llm_config to be more specific
+        use_cache: Optional[bool] = None, # Added for method-specific cache control
+        **litellm_kwargs
     ) -> pd.DataFrame:
         """
         Analyzes sentiment of texts using a specified LLM via LiteLLM.
@@ -470,6 +523,9 @@ class NLPlotLLM():
                 Defaults to a standard sentiment analysis prompt:
                 "Analyze the sentiment of the following text and classify it as 'positive', 'negative', or 'neutral'. Return only the single word classification for the sentiment. Text: {text}".
             temperature (float, optional): Temperature for LLM generation. Defaults to 0.0.
+            use_cache (Optional[bool], optional): Whether to use caching for this specific call.
+                                                 If None, uses the instance's default setting (`self.use_cache_default`).
+                                                 Defaults to None.
             **litellm_kwargs: Additional keyword arguments to pass directly to `litellm.completion`.
                               This can include provider-specific parameters like `api_key`, `api_base`,
                               `max_tokens`, `top_p`, `frequency_penalty`, `presence_penalty`, etc.
@@ -496,10 +552,14 @@ class NLPlotLLM():
         if text_series.empty:
             return pd.DataFrame(columns=["text", "sentiment", "raw_llm_output"])
 
-        if prompt_template_str is None:
-            prompt_template_str = "Analyze the sentiment of the following text and classify it as 'positive', 'negative', or 'neutral'. Return only the single word classification for the sentiment. Text: {text}"
+        # Determine if cache should be used for this call
+        current_use_cache = use_cache if use_cache is not None else self.use_cache_default
 
-        if "{text}" not in prompt_template_str:
+        final_prompt_template_str = prompt_template_str
+        if final_prompt_template_str is None:
+            final_prompt_template_str = "Analyze the sentiment of the following text and classify it as 'positive', 'negative', or 'neutral'. Return only the single word classification for the sentiment. Text: {text}"
+
+        if "{text}" not in final_prompt_template_str:
             print("Error: Prompt template must include '{text}' placeholder.")
             return pd.DataFrame(
                 [{'text': str(txt) if pd.notna(txt) else "",
@@ -518,76 +578,860 @@ class NLPlotLLM():
                 sentiment = "neutral"
                 raw_llm_response_content = "Input text was empty or whitespace."
             else:
-                try:
-                    # Construct messages for LiteLLM
-                    messages = [{"role": "user", "content": prompt_template_str.format(text=original_text_for_df)}]
+                # --- Cache Key Generation ---
+                # Sort kwargs to ensure consistent key order. Only include relevant ones for cache.
+                # More sophisticated hashing might be needed for complex kwargs.
+                cacheable_kwargs_items = sorted(
+                    (k, v) for k, v in litellm_kwargs.items()
+                    if k in ("temperature", "max_tokens", "top_p") # Add other relevant kwargs here
+                )
+                cache_key_tuple = (
+                    "analyze_sentiment_llm", # Method identifier
+                    model,
+                    final_prompt_template_str,
+                    original_text_for_df,
+                    tuple(cacheable_kwargs_items)
+                )
 
-                    # Prepare kwargs for litellm.completion, removing any that are not valid
-                    valid_litellm_params = {"model", "messages", "temperature", "api_key", "api_base", "max_tokens", "top_p", "frequency_penalty", "presence_penalty", "stream", "stop", "user", "custom_llm_provider"}
-                    # Filter litellm_kwargs to only include valid parameters for litellm.completion
-                    # Also, ensure 'temperature' from method signature is included if not in litellm_kwargs
-                    completion_kwargs = {k: v for k, v in litellm_kwargs.items() if k in valid_litellm_params}
-                    if 'temperature' not in completion_kwargs: # Ensure method's temperature is used
-                        completion_kwargs['temperature'] = temperature
+                cached_result = None
+                if current_use_cache and self.cache:
+                    try:
+                        cached_result = self.cache.get(cache_key_tuple)
+                    except Exception as e:
+                        print(f"Warning: Cache get failed for key {cache_key_tuple}. Error: {e}")
 
 
-                    response = litellm.completion(
-                        model=model,
-                        messages=messages,
-                        **completion_kwargs
-                    )
-                    # Accessing content: response['choices'][0]['message']['content'] or response.choices[0].message.content
-                    if response.choices and response.choices[0].message:
-                         raw_llm_response_content = response.choices[0].message.content or ""
-                    else: # Fallback if structure is unexpected
-                         raw_llm_response_content = str(response)
+                if cached_result is not None:
+                    sentiment = cached_result["sentiment"]
+                    raw_llm_response_content = cached_result["raw_llm_output"]
+                    # print(f"Cache HIT for sentiment: {original_text_for_df[:30]}...") # For debugging
+                else:
+                    # print(f"Cache MISS for sentiment: {original_text_for_df[:30]}...") # For debugging
+                    try:
+                        messages = [{"role": "user", "content": final_prompt_template_str.format(text=original_text_for_df)}]
+                        completion_kwargs = {k: v for k, v in litellm_kwargs.items()} # Pass all litellm_kwargs
+                        if 'temperature' not in completion_kwargs:
+                            completion_kwargs['temperature'] = temperature # Default if not in kwargs
 
-                    processed_output = raw_llm_response_content.strip().lower()
-                    if "positive" in processed_output:
-                        sentiment = "positive"
-                    elif "negative" in processed_output:
-                        sentiment = "negative"
-                    elif "neutral" in processed_output:
-                        sentiment = "neutral"
+                        response = litellm.completion(
+                            model=model,
+                            messages=messages,
+                            **completion_kwargs
+                        )
+                        if response.choices and response.choices[0].message:
+                            raw_llm_response_content = response.choices[0].message.content or ""
+                        else:
+                            raw_llm_response_content = str(response)
 
-                except ImportError: # Should be caught by LITELLM_AVAILABLE at the start, but as a safeguard
-                    print("LiteLLM is not installed. Cannot perform sentiment analysis.")
-                    sentiment = "error"
-                    raw_llm_response_content = "LiteLLM not installed."
-                    # Break or return all as error? For now, process current then others might fail too.
-                except litellm.exceptions.AuthenticationError as e:
-                    print(f"LiteLLM Authentication Error: {e}")
-                    sentiment = "error"
-                    raw_llm_response_content = f"AuthenticationError: {e}"
-                except litellm.exceptions.APIConnectionError as e:
-                    print(f"LiteLLM API Connection Error: {e}")
-                    sentiment = "error"
-                    raw_llm_response_content = f"APIConnectionError: {e}"
-                except litellm.exceptions.RateLimitError as e:
-                    print(f"LiteLLM Rate Limit Error: {e}")
-                    sentiment = "error"
-                    raw_llm_response_content = f"RateLimitError: {e}"
-                except Exception as e: # Catch any other exceptions from LiteLLM or processing
-                    print(f"Error analyzing sentiment for text '{original_text_for_df[:50]}...': {e}")
-                    sentiment = "error"
-                    raw_llm_response_content = str(e)
+                        processed_output = raw_llm_response_content.strip().lower()
+                        if "positive" in processed_output: sentiment = "positive"
+                        elif "negative" in processed_output: sentiment = "negative"
+                        elif "neutral" in processed_output: sentiment = "neutral"
+                        # else: sentiment remains "unknown"
+
+                        if current_use_cache and self.cache:
+                            try:
+                                self.cache.set(cache_key_tuple, {"sentiment": sentiment, "raw_llm_output": raw_llm_response_content})
+                            except Exception as e:
+                                print(f"Warning: Cache set failed for key {cache_key_tuple}. Error: {e}")
+
+                    except ImportError:
+                        print("LiteLLM is not installed. Cannot perform sentiment analysis.")
+                        sentiment, raw_llm_response_content = "error", "LiteLLM not installed."
+                    except litellm.exceptions.AuthenticationError as e:
+                        print(f"LiteLLM Authentication Error: {e}"); sentiment, raw_llm_response_content = "error", f"AuthenticationError: {e}"
+                    except litellm.exceptions.APIConnectionError as e:
+                        print(f"LiteLLM API Connection Error: {e}"); sentiment, raw_llm_response_content = "error", f"APIConnectionError: {e}"
+                    except litellm.exceptions.RateLimitError as e:
+                        print(f"LiteLLM Rate Limit Error: {e}"); sentiment, raw_llm_response_content = "error", f"RateLimitError: {e}"
+                    except Exception as e:
+                        print(f"Error analyzing sentiment for text '{original_text_for_df[:50]}...': {e}"); sentiment, raw_llm_response_content = "error", str(e)
 
             results.append({"text": original_text_for_df, "sentiment": sentiment, "raw_llm_output": raw_llm_response_content})
 
+        if self.cache: # Close the cache connection if it was opened by this instance
+            try: self.cache.close()
+            except Exception as e: print(f"Warning: Error closing cache: {e}")
+
         return pd.DataFrame(results, columns=["text", "sentiment", "raw_llm_output"])
+
+    async def _analyze_sentiment_single_async(
+        self,
+        text_to_analyze: str,
+        model: str,
+        prompt_template_str: str,
+        temperature: float,
+        current_use_cache: bool,
+        litellm_kwargs: dict
+    ) -> dict:
+        """
+        Helper coroutine to process a single text for sentiment analysis asynchronously,
+        including cache lookup and storage.
+
+        Args:
+            text_to_analyze (str): The text string to analyze.
+            model (str): LiteLLM model string.
+            prompt_template_str (str): The prompt template string.
+            temperature (float): LLM temperature.
+            current_use_cache (bool): Whether caching is enabled for this operation.
+            litellm_kwargs (dict): Additional kwargs for litellm.acompletion.
+
+        Returns:
+            dict: A dictionary containing "text", "sentiment", and "raw_llm_output".
+                  If an error occurs, "sentiment" will be "error" and "raw_llm_output" will contain the error message.
+        """
+        original_text_for_df = str(text_to_analyze) if pd.notna(text_to_analyze) else ""
+        sentiment = "unknown"
+        raw_llm_response_content = ""
+
+        if not original_text_for_df.strip():
+            sentiment = "neutral"
+            raw_llm_response_content = "Input text was empty or whitespace."
+        else:
+            cacheable_kwargs_items = sorted(
+                (k, v) for k, v in litellm_kwargs.items()
+                if k in ("temperature", "max_tokens", "top_p")
+            )
+            cache_key_tuple = (
+                "analyze_sentiment_llm", model, prompt_template_str, # Note: using the base method name for cache key consistency
+                original_text_for_df, tuple(cacheable_kwargs_items)
+            )
+
+            cached_result = None
+            if current_use_cache and self.cache:
+                try: cached_result = self.cache.get(cache_key_tuple)
+                except Exception as e: print(f"Warning: Async cache get failed. Error: {e}")
+
+            if cached_result is not None:
+                sentiment = cached_result["sentiment"]
+                raw_llm_response_content = cached_result["raw_llm_output"]
+            else:
+                try:
+                    messages = [{"role": "user", "content": prompt_template_str.format(text=original_text_for_df)}]
+                    completion_kwargs = {**litellm_kwargs} # Ensure all kwargs are passed
+                    if 'temperature' not in completion_kwargs: completion_kwargs['temperature'] = temperature
+
+                    response = await litellm.acompletion(model=model, messages=messages, **completion_kwargs)
+
+                    if response.choices and response.choices[0].message:
+                        raw_llm_response_content = response.choices[0].message.content or ""
+                    else: raw_llm_response_content = str(response)
+
+                    processed_output = raw_llm_response_content.strip().lower()
+                    if "positive" in processed_output: sentiment = "positive"
+                    elif "negative" in processed_output: sentiment = "negative"
+                    elif "neutral" in processed_output: sentiment = "neutral"
+
+                    if current_use_cache and self.cache:
+                        try: self.cache.set(cache_key_tuple, {"sentiment": sentiment, "raw_llm_output": raw_llm_response_content})
+                        except Exception as e: print(f"Warning: Async cache set failed. Error: {e}")
+                except Exception as e:
+                    print(f"Error in _analyze_sentiment_single_async for '{original_text_for_df[:30]}...': {e}")
+                    sentiment, raw_llm_response_content = "error", str(e)
+
+        return {"text": original_text_for_df, "sentiment": sentiment, "raw_llm_output": raw_llm_response_content}
+
+    async def analyze_sentiment_llm_async(
+        self,
+        text_series: pd.Series,
+        model: str,
+        prompt_template_str: Optional[str] = None,
+        temperature: float = 0.0,
+        use_cache: Optional[bool] = None,
+        concurrency_limit: Optional[int] = None, # Max concurrent requests
+        return_exceptions: bool = True, # For asyncio.gather
+        **litellm_kwargs
+    ) -> pd.DataFrame:
+        """
+        Asynchronously analyzes sentiment of texts using a specified LLM via LiteLLM.
+        Results are returned in the same order as the input text_series.
+
+        Args:
+            text_series (pd.Series): Series containing texts to analyze.
+            model (str): The LiteLLM model string (e.g., "openai/gpt-4o", "ollama/gemma").
+            prompt_template_str (Optional[str], optional): Custom prompt template.
+                Must include "{text}". Defaults to a standard sentiment analysis prompt.
+            temperature (float, optional): Temperature for LLM generation. Defaults to 0.0.
+            use_cache (Optional[bool], optional): Whether to use caching. Overrides instance default.
+                                                 Defaults to None (use instance default).
+            concurrency_limit (Optional[int], optional): Maximum number of concurrent LLM API calls.
+                                                       Defaults to None (no limit).
+            return_exceptions (bool, optional): If True, exceptions during individual API calls
+                                                are caught and returned as part of the result for that item.
+                                                If False, the first exception will stop all processing.
+                                                Defaults to True.
+            **litellm_kwargs: Additional arguments for `litellm.acompletion`
+                              (e.g., `api_key`, `max_tokens`).
+
+        Returns:
+            pd.DataFrame: DataFrame with columns ["text", "sentiment", "raw_llm_output"].
+                          If `return_exceptions` is True, failed items will have "error" as sentiment
+                          and the error message in "raw_llm_output".
+        """
+        if not LITELLM_AVAILABLE:
+            print("Warning: LiteLLM is not installed. Async LLM-based sentiment analysis is not available.")
+            return pd.DataFrame(columns=["text", "sentiment", "raw_llm_output"])
+        if not isinstance(text_series, pd.Series):
+            print("Warning: Input 'text_series' must be a pandas Series.")
+            return pd.DataFrame(columns=["text", "sentiment", "raw_llm_output"])
+        if text_series.empty:
+            return pd.DataFrame(columns=["text", "sentiment", "raw_llm_output"])
+
+        current_use_cache = use_cache if use_cache is not None else self.use_cache_default
+        final_prompt_template_str = prompt_template_str
+        if final_prompt_template_str is None:
+            final_prompt_template_str = "Analyze the sentiment of the following text and classify it as 'positive', 'negative', or 'neutral'. Return only the single word classification for the sentiment. Text: {text}"
+        if "{text}" not in final_prompt_template_str:
+            print("Error: Prompt template must include '{text}' placeholder.")
+            # Consider how to handle this for async - maybe return a list of error dicts
+            results = [{"text": str(txt), "sentiment": "error", "raw_llm_output": "Prompt template error: missing {text}"} for txt in text_series]
+            return pd.DataFrame(results, columns=["text", "sentiment", "raw_llm_output"])
+
+        tasks = []
+        semaphore = asyncio.Semaphore(concurrency_limit) if concurrency_limit and concurrency_limit > 0 else None
+
+        async def task_wrapper(text_input):
+            if semaphore:
+                async with semaphore:
+                    return await self._analyze_sentiment_single_async(
+                        text_input, model, final_prompt_template_str, temperature, current_use_cache, litellm_kwargs
+                    )
+            else:
+                return await self._analyze_sentiment_single_async(
+                    text_input, model, final_prompt_template_str, temperature, current_use_cache, litellm_kwargs
+                )
+
+        for text_input in text_series:
+            tasks.append(task_wrapper(text_input))
+
+        all_results_raw = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
+
+        # Process results, handling potential exceptions from gather
+        processed_results = []
+        for i, res_or_exc in enumerate(all_results_raw):
+            original_text = str(text_series.iloc[i]) if pd.notna(text_series.iloc[i]) else ""
+            if isinstance(res_or_exc, Exception):
+                print(f"Exception for text '{original_text[:30]}...': {res_or_exc}")
+                processed_results.append({"text": original_text, "sentiment": "error", "raw_llm_output": str(res_or_exc)})
+            else: # Should be a dict from _analyze_sentiment_single_async
+                processed_results.append(res_or_exc)
+
+        if self.cache: # Close cache if opened by this instance
+            try: self.cache.close()
+            except Exception as e: print(f"Warning: Error closing cache: {e}")
+
+        return pd.DataFrame(processed_results, columns=["text", "sentiment", "raw_llm_output"])
+
+    async def _categorize_text_single_async(
+        self,
+        text_to_categorize: str,
+        categories: List[str],
+        category_list_str: str, # Pre-formatted string of categories for prompt
+        model: str,
+        prompt_template_str: str,
+        multi_label: bool,
+        temperature: float,
+        current_use_cache: bool,
+        litellm_kwargs: dict
+    ) -> dict:
+        """
+        Helper coroutine to process a single text for categorization asynchronously,
+        including cache lookup and storage.
+
+        Args:
+            text_to_categorize (str): The text string to categorize.
+            categories (List[str]): List of predefined categories.
+            category_list_str (str): Comma-separated string of categories for the prompt.
+            model (str): LiteLLM model string.
+            prompt_template_str (str): The prompt template string.
+            multi_label (bool): Whether multi-label categorization is enabled.
+            temperature (float): LLM temperature.
+            current_use_cache (bool): Whether caching is enabled for this operation.
+            litellm_kwargs (dict): Additional kwargs for litellm.acompletion.
+
+        Returns:
+            dict: A dictionary containing "text", the category column ("category" or "categories"),
+                  "raw_llm_output", and a temporary "_multi_label" flag.
+                  If an error occurs, the category column will hold "error" (or [] for multi_label)
+                  and "raw_llm_output" will contain the error message.
+        """
+        original_text_for_df = str(text_to_categorize) if pd.notna(text_to_categorize) else ""
+        category_col_name = "categories" if multi_label else "category"
+        parsed_categories_result: Any = [] if multi_label else "unknown"
+        raw_llm_response_content = ""
+
+        if not original_text_for_df.strip():
+            raw_llm_response_content = "Input text was empty or whitespace."
+            # parsed_categories_result remains default
+        else:
+            cacheable_kwargs_items = sorted(
+                (k, v) for k, v in litellm_kwargs.items() if k in ("temperature", "max_tokens", "top_p")
+            )
+            cache_key_tuple = (
+                "categorize_text_llm", model, prompt_template_str,
+                original_text_for_df, tuple(sorted(categories)), multi_label,
+                tuple(cacheable_kwargs_items)
+            )
+
+            cached_result = None
+            if current_use_cache and self.cache:
+                try: cached_result = self.cache.get(cache_key_tuple)
+                except Exception as e: print(f"Warning: Async cache get failed for categorize. Error: {e}")
+
+            if cached_result is not None:
+                parsed_categories_result = cached_result["categories_result"]
+                raw_llm_response_content = cached_result["raw_llm_output"]
+            else:
+                try:
+                    format_args = {"text": original_text_for_df}
+                    if "{categories}" in prompt_template_str: format_args["categories"] = category_list_str
+                    formatted_content_for_llm = prompt_template_str.format(**format_args)
+                    messages = [{"role": "user", "content": formatted_content_for_llm}]
+
+                    completion_kwargs = {**litellm_kwargs}
+                    if 'temperature' not in completion_kwargs: completion_kwargs['temperature'] = temperature
+
+                    response = await litellm.acompletion(model=model, messages=messages, **completion_kwargs)
+
+                    if response.choices and response.choices[0].message:
+                        raw_llm_response_content = response.choices[0].message.content or ""
+                    else: raw_llm_response_content = str(response)
+
+                    processed_output = raw_llm_response_content.strip().lower()
+                    if multi_label:
+                        found_cats_raw = [cat.strip() for cat in processed_output.split(',')]
+                        parsed_categories_result = [
+                            og_cat for og_cat in categories
+                            if og_cat.lower() in [fcr.lower() for fcr in found_cats_raw if fcr and fcr != 'none']
+                        ]
+                    else:
+                        parsed_categories_result = "unknown"
+                        exact_match_found = False
+                        for cat_og in categories:
+                            if cat_og.lower() == processed_output:
+                                parsed_categories_result = cat_og; exact_match_found = True; break
+                        if not exact_match_found:
+                            for cat_og in categories:
+                                if cat_og.lower() in processed_output:
+                                    parsed_categories_result = cat_og; break
+                        if parsed_categories_result == "unknown" and processed_output in ["unknown", "none"]: pass
+
+                    if current_use_cache and self.cache:
+                        try: self.cache.set(cache_key_tuple, {"categories_result": parsed_categories_result, "raw_llm_output": raw_llm_response_content})
+                        except Exception as e: print(f"Warning: Async cache set failed for categorize. Error: {e}")
+                except Exception as e:
+                    print(f"Error in _categorize_text_single_async for '{original_text_for_df[:30]}...': {e}")
+                    parsed_categories_result = [] if multi_label else "error"
+                    raw_llm_response_content = str(e)
+
+        return {"text": original_text_for_df, category_col_name: parsed_categories_result, "raw_llm_output": raw_llm_response_content, "_multi_label": multi_label}
+
+
+    async def categorize_text_llm_async(
+        self,
+        text_series: pd.Series,
+        categories: List[str],
+        model: str,
+        prompt_template_str: Optional[str] = None,
+        multi_label: bool = False,
+        temperature: float = 0.0,
+        use_cache: Optional[bool] = None,
+        concurrency_limit: Optional[int] = None,
+        return_exceptions: bool = True,
+        **litellm_kwargs
+    ) -> pd.DataFrame:
+        """
+        Asynchronously categorizes texts into predefined categories using LiteLLM.
+
+        Args:
+            text_series (pd.Series): Series containing texts to categorize.
+            categories (List[str]): A list of predefined category names.
+            model (str): The LiteLLM model string (e.g., "openai/gpt-4o").
+            prompt_template_str (Optional[str], optional): Custom prompt template.
+                Must include "{text}" and can include "{categories}".
+                Defaults to a standard categorization prompt.
+            multi_label (bool, optional): If True, allows multiple categories per text.
+                                        Output column becomes "categories" (List[str]).
+                                        If False, "category" (str). Defaults to False.
+            temperature (float, optional): LLM temperature. Defaults to 0.0.
+            use_cache (Optional[bool], optional): Whether to use caching. Overrides instance default.
+            concurrency_limit (Optional[int], optional): Max concurrent LLM calls. Defaults to None.
+            return_exceptions (bool, optional): If True, exceptions are caught and returned in results.
+                                                Defaults to True.
+            **litellm_kwargs: Additional arguments for `litellm.acompletion`.
+
+        Returns:
+            pd.DataFrame: DataFrame with ["text", category_column_name, "raw_llm_output"].
+                          Failed items will have "error" or [] in category_column_name.
+        """
+        category_col_name = "categories" if multi_label else "category"
+        default_columns = ["text", category_col_name, "raw_llm_output"]
+
+        if not LITELLM_AVAILABLE:
+            print("Warning: LiteLLM is not available for async categorization.")
+            return pd.DataFrame(columns=default_columns)
+        if not isinstance(text_series, pd.Series):
+            print("Warning: Input 'text_series' must be a pandas Series.")
+            return pd.DataFrame(columns=default_columns)
+        if text_series.empty: return pd.DataFrame(columns=default_columns)
+        if not categories or not isinstance(categories, list) or not all(isinstance(c, str) and c for c in categories):
+            raise ValueError("Categories list must be a non-empty list of non-empty strings.")
+
+        current_use_cache = use_cache if use_cache is not None else self.use_cache_default
+        category_list_str_for_prompt = ", ".join(f"'{c}'" for c in categories)
+
+        final_prompt_template_str = prompt_template_str
+        if final_prompt_template_str is None:
+            if multi_label:
+                final_prompt_template_str = (
+                    f"Analyze the following text and classify it into one or more of these categories: {category_list_str_for_prompt}. "
+                    f"Return a comma-separated list of the matching category names. If no categories match, return 'none'. Text: {{text}}"
+                )
+            else:
+                final_prompt_template_str = (
+                    f"Analyze the following text and classify it into exactly one of these categories: {category_list_str_for_prompt}. "
+                    f"Return only the single matching category name. If no categories match, return 'unknown'. Text: {{text}}"
+                )
+
+        if "{text}" not in final_prompt_template_str:
+            results = [{"text": str(txt), category_col_name: [] if multi_label else "error", "raw_llm_output": "Prompt template error: missing {text}"} for txt in text_series]
+            return pd.DataFrame(results, columns=default_columns)
+
+        tasks = []
+        semaphore = asyncio.Semaphore(concurrency_limit) if concurrency_limit and concurrency_limit > 0 else None
+
+        async def task_wrapper(text_input):
+            if semaphore:
+                async with semaphore:
+                    return await self._categorize_text_single_async(
+                        text_input, categories, category_list_str_for_prompt, model, final_prompt_template_str,
+                        multi_label, temperature, current_use_cache, litellm_kwargs
+                    )
+            else:
+                return await self._categorize_text_single_async(
+                    text_input, categories, category_list_str_for_prompt, model, final_prompt_template_str,
+                    multi_label, temperature, current_use_cache, litellm_kwargs
+                )
+
+        for text_input in text_series:
+            tasks.append(task_wrapper(text_input))
+
+        all_results_raw = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
+
+        processed_results = []
+        for i, res_or_exc in enumerate(all_results_raw):
+            original_text = str(text_series.iloc[i]) if pd.notna(text_series.iloc[i]) else ""
+            if isinstance(res_or_exc, Exception):
+                processed_results.append({"text": original_text, category_col_name: [] if multi_label else "error", "raw_llm_output": str(res_or_exc)})
+            else: # Remove the temporary '_multi_label' key before creating DataFrame
+                res_or_exc.pop("_multi_label", None)
+                processed_results.append(res_or_exc)
+
+        if self.cache:
+            try: self.cache.close()
+            except Exception as e: print(f"Warning: Error closing cache: {e}")
+
+        return pd.DataFrame(processed_results, columns=default_columns)
+
+    async def _categorize_text_single_async(
+        self,
+        text_to_categorize: str,
+        categories: List[str],
+        category_list_str: str, # Pre-formatted string of categories for prompt
+        model: str,
+        prompt_template_str: str,
+        multi_label: bool,
+        temperature: float,
+        current_use_cache: bool,
+        litellm_kwargs: dict
+    ) -> dict:
+        """Helper coroutine to process a single text for categorization asynchronously, with caching."""
+        original_text_for_df = str(text_to_categorize) if pd.notna(text_to_categorize) else ""
+        category_col_name = "categories" if multi_label else "category"
+        parsed_categories_result: Any = [] if multi_label else "unknown"
+        raw_llm_response_content = ""
+
+        if not original_text_for_df.strip():
+            raw_llm_response_content = "Input text was empty or whitespace."
+        else:
+            cacheable_kwargs_items = sorted(
+                (k, v) for k, v in litellm_kwargs.items() if k in ("temperature", "max_tokens", "top_p")
+            )
+            cache_key_tuple = (
+                "categorize_text_llm", model, prompt_template_str,
+                original_text_for_df, tuple(sorted(categories)), multi_label,
+                tuple(cacheable_kwargs_items)
+            )
+
+            cached_result = None
+            if current_use_cache and self.cache:
+                try: cached_result = self.cache.get(cache_key_tuple)
+                except Exception as e: print(f"Warning: Async cache get failed for categorize. Error: {e}")
+
+            if cached_result is not None:
+                parsed_categories_result = cached_result["categories_result"]
+                raw_llm_response_content = cached_result["raw_llm_output"]
+            else:
+                try:
+                    format_args = {"text": original_text_for_df}
+                    if "{categories}" in prompt_template_str: format_args["categories"] = category_list_str
+                    formatted_content_for_llm = prompt_template_str.format(**format_args)
+                    messages = [{"role": "user", "content": formatted_content_for_llm}]
+
+                    completion_kwargs = {**litellm_kwargs}
+                    if 'temperature' not in completion_kwargs: completion_kwargs['temperature'] = temperature
+
+                    response = await litellm.acompletion(model=model, messages=messages, **completion_kwargs)
+
+                    if response.choices and response.choices[0].message:
+                        raw_llm_response_content = response.choices[0].message.content or ""
+                    else: raw_llm_response_content = str(response)
+
+                    processed_output = raw_llm_response_content.strip().lower()
+                    if multi_label:
+                        found_cats_raw = [cat.strip() for cat in processed_output.split(',')]
+                        parsed_categories_result = [
+                            og_cat for og_cat in categories
+                            if og_cat.lower() in [fcr.lower() for fcr in found_cats_raw if fcr and fcr != 'none']
+                        ]
+                    else:
+                        parsed_categories_result = "unknown"
+                        exact_match_found = False
+                        for cat_og in categories:
+                            if cat_og.lower() == processed_output:
+                                parsed_categories_result = cat_og; exact_match_found = True; break
+                        if not exact_match_found: # Fallback to substring match if no exact match
+                            for cat_og in categories:
+                                if cat_og.lower() in processed_output: # Check if category is IN output
+                                    parsed_categories_result = cat_og; break
+                        if parsed_categories_result == "unknown" and processed_output in ["unknown", "none"]: pass
+
+                    if current_use_cache and self.cache:
+                        try: self.cache.set(cache_key_tuple, {"categories_result": parsed_categories_result, "raw_llm_output": raw_llm_response_content})
+                        except Exception as e: print(f"Warning: Async cache set failed for categorize. Error: {e}")
+                except Exception as e:
+                    print(f"Error in _categorize_text_single_async for '{original_text_for_df[:30]}...': {e}")
+                    parsed_categories_result = [] if multi_label else "error"
+                    raw_llm_response_content = str(e)
+
+        return {"text": original_text_for_df, category_col_name: parsed_categories_result, "raw_llm_output": raw_llm_response_content, "_multi_label": multi_label} # Temp key for main async method
+
+    async def categorize_text_llm_async(
+        self,
+        text_series: pd.Series,
+        categories: List[str],
+        model: str,
+        prompt_template_str: Optional[str] = None,
+        multi_label: bool = False,
+        temperature: float = 0.0,
+        use_cache: Optional[bool] = None,
+        concurrency_limit: Optional[int] = None,
+        return_exceptions: bool = True,
+        **litellm_kwargs
+    ) -> pd.DataFrame:
+        """Asynchronously categorizes texts into predefined categories."""
+        category_col_name = "categories" if multi_label else "category"
+        default_columns = ["text", category_col_name, "raw_llm_output"]
+
+        if not LITELLM_AVAILABLE:
+            print("Warning: LiteLLM is not available for async categorization.")
+            return pd.DataFrame(columns=default_columns)
+        if not isinstance(text_series, pd.Series):
+            print("Warning: Input 'text_series' must be a pandas Series.")
+            return pd.DataFrame(columns=default_columns)
+        if text_series.empty: return pd.DataFrame(columns=default_columns)
+        if not categories or not isinstance(categories, list) or not all(isinstance(c, str) and c for c in categories):
+            raise ValueError("Categories list must be a non-empty list of non-empty strings.")
+
+        current_use_cache = use_cache if use_cache is not None else self.use_cache_default
+        category_list_str_for_prompt = ", ".join(f"'{c}'" for c in categories)
+
+        final_prompt_template_str = prompt_template_str
+        if final_prompt_template_str is None:
+            if multi_label:
+                final_prompt_template_str = (
+                    f"Analyze the following text and classify it into one or more of these categories: {category_list_str_for_prompt}. "
+                    f"Return a comma-separated list of the matching category names. If no categories match, return 'none'. Text: {{text}}"
+                )
+            else:
+                final_prompt_template_str = (
+                    f"Analyze the following text and classify it into exactly one of these categories: {category_list_str_for_prompt}. "
+                    f"Return only the single matching category name. If no categories match, return 'unknown'. Text: {{text}}"
+                )
+
+        if "{text}" not in final_prompt_template_str: # Should also check for {categories} if prompt needs it
+            results = [{"text": str(txt), category_col_name: [] if multi_label else "error", "raw_llm_output": "Prompt template error: missing {text}"} for txt in text_series]
+            return pd.DataFrame(results, columns=default_columns)
+
+        tasks = []
+        semaphore = asyncio.Semaphore(concurrency_limit) if concurrency_limit and concurrency_limit > 0 else None
+
+        async def task_wrapper(text_input):
+            if semaphore:
+                async with semaphore:
+                    return await self._categorize_text_single_async(
+                        text_input, categories, category_list_str_for_prompt, model, final_prompt_template_str,
+                        multi_label, temperature, current_use_cache, litellm_kwargs
+                    )
+            else:
+                return await self._categorize_text_single_async(
+                    text_input, categories, category_list_str_for_prompt, model, final_prompt_template_str,
+                    multi_label, temperature, current_use_cache, litellm_kwargs
+                )
+
+        for text_input in text_series:
+            tasks.append(task_wrapper(text_input))
+
+        all_results_raw = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
+
+        processed_results = []
+        for i, res_or_exc in enumerate(all_results_raw):
+            original_text = str(text_series.iloc[i]) if pd.notna(text_series.iloc[i]) else ""
+            # Determine category_col_name based on _multi_label from result if it exists, else from input
+            current_multi_label_for_row = multi_label # Default to input multi_label
+            if isinstance(res_or_exc, dict) and "_multi_label" in res_or_exc:
+                current_multi_label_for_row = res_or_exc["_multi_label"]
+
+            col_name_for_this_row = "categories" if current_multi_label_for_row else "category"
+
+            if isinstance(res_or_exc, Exception):
+                # Ensure the column name matches what the DataFrame expects based on the input `multi_label`
+                # This part is tricky if results can have mixed multi_label states due to errors.
+                # For simplicity, we'll use the original multi_label to determine error column structure.
+                error_val = [] if multi_label else "error"
+                processed_results.append({"text": original_text, category_col_name: error_val, "raw_llm_output": str(res_or_exc)})
+            else:
+                res_or_exc.pop("_multi_label", None) # Clean up temp key
+                # If the helper used a different key (e.g. processed single when expecting multi), adjust.
+                # This primarily handles the structure for the DataFrame, assuming `category_col_name` is the target.
+                if col_name_for_this_row != category_col_name and category_col_name in res_or_exc :
+                     res_or_exc[col_name_for_this_row] = res_or_exc.pop(category_col_name)
+                elif col_name_for_this_row != category_col_name and col_name_for_this_row in res_or_exc:
+                    # If the result has the "correct" dynamic column name, but it's not the one expected by default_columns
+                    # ensure it's placed in the column name that default_columns expects.
+                     res_or_exc[category_col_name] = res_or_exc.pop(col_name_for_this_row)
+
+
+                processed_results.append(res_or_exc)
+
+        if self.cache:
+            try: self.cache.close()
+            except Exception as e: print(f"Warning: Error closing cache: {e}")
+
+        return pd.DataFrame(processed_results, columns=default_columns)
+
+    async def _summarize_text_single_async(
+        self,
+        text_to_summarize: str,
+        model: str,
+        direct_prompt_template_str: str,
+        chunk_prompt_template_str_in: Optional[str],
+        combine_prompt_template_str_in: Optional[str],
+        temperature: float,
+        use_chunking: bool,
+        chunk_size: int,
+        chunk_overlap: int,
+        current_use_cache: bool,
+        litellm_kwargs: dict
+    ) -> dict:
+        """
+        Helper coroutine to process a single text for summarization asynchronously,
+        handling chunking internally and caching the final summary.
+
+        Args:
+            text_to_summarize (str): The text string to summarize.
+            model (str): LiteLLM model string.
+            direct_prompt_template_str (str): Prompt for direct or fallback summarization.
+            chunk_prompt_template_str_in (Optional[str]): Prompt for individual chunks.
+            combine_prompt_template_str_in (Optional[str]): Prompt for combining chunk summaries.
+            temperature (float): LLM temperature.
+            use_chunking (bool): Whether chunking is enabled.
+            chunk_size (int): Size of chunks for splitting.
+            chunk_overlap (int): Overlap between chunks.
+            current_use_cache (bool): Whether caching is enabled for this operation.
+            litellm_kwargs (dict): Additional kwargs for litellm.acompletion.
+
+        Returns:
+            dict: A dictionary containing "original_text", "summary", and "raw_llm_output".
+                  If an error occurs, "summary" will be "error" or contain error indicators,
+                  and "raw_llm_output" will hold error details.
+        """
+        original_text_for_df = str(text_to_summarize) if pd.notna(text_to_summarize) else ""
+        summary_text = ""
+        raw_llm_response_agg = ""
+
+        if not original_text_for_df.strip():
+            summary_text = ""
+            raw_llm_response_agg = "Input text was empty or whitespace."
+        else:
+            cacheable_kwargs_items = sorted(
+                (k, v) for k, v in litellm_kwargs.items() if k in ("temperature", "max_tokens", "top_p")
+            )
+            _actual_chunk_prompt = chunk_prompt_template_str_in if chunk_prompt_template_str_in else "Concisely summarize this piece of text: {text}"
+            _actual_combine_prompt = combine_prompt_template_str_in
+
+            num_chunks_for_key = 0
+            if use_chunking and LANGCHAIN_SPLITTERS_AVAILABLE:
+                temp_chunks_for_key = self._chunk_text(original_text_for_df, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+                num_chunks_for_key = len(temp_chunks_for_key)
+
+            cache_key_tuple = (
+                "summarize_text_llm", model,
+                direct_prompt_template_str,
+                _actual_chunk_prompt if use_chunking else None,
+                _actual_combine_prompt if use_chunking and num_chunks_for_key > 1 else None,
+                original_text_for_df,
+                use_chunking, chunk_size if use_chunking else None, chunk_overlap if use_chunking else None,
+                tuple(cacheable_kwargs_items)
+            )
+
+            cached_result = None
+            if current_use_cache and self.cache:
+                try: cached_result = self.cache.get(cache_key_tuple)
+                except Exception as e: print(f"Warning: Async cache get failed for summarize. Error: {e}")
+
+            if cached_result is not None:
+                summary_text = cached_result["summary"]
+                raw_llm_response_agg = cached_result["raw_llm_output"]
+            else:
+                _final_completion_kwargs = {**litellm_kwargs}
+                if 'temperature' not in _final_completion_kwargs: _final_completion_kwargs['temperature'] = temperature
+
+                if not use_chunking or not LANGCHAIN_SPLITTERS_AVAILABLE: # Fallback to direct if chunking selected but not available
+                    try:
+                        messages = [{"role": "user", "content": direct_prompt_template_str.format(text=original_text_for_df)}]
+                        response = await litellm.acompletion(model=model, messages=messages, **_final_completion_kwargs)
+                        summary_text = response.choices[0].message.content.strip() if response.choices and response.choices[0].message else ""
+                        raw_llm_response_agg = str(response)
+                        if use_chunking and not LANGCHAIN_SPLITTERS_AVAILABLE : raw_llm_response_agg = f"Chunking skipped (splitters unavailable). {raw_llm_response_agg}"
+                    except Exception as e:
+                        summary_text, raw_llm_response_agg = "error", f"Async direct/fallback summary error: {e}"
+                else: # Proceed with chunking
+                    chunks = self._chunk_text(original_text_for_df, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+                    if not chunks:
+                        summary_text, raw_llm_response_agg = "", "Text was empty or too short after attempting to chunk."
+                    else:
+                        chunk_summaries_list, raw_chunk_outputs_list = [], []
+                        current_chunk_prompt_str = _actual_chunk_prompt
+                        if "{text}" not in current_chunk_prompt_str:
+                            summary_text, raw_llm_response_agg = "error_prompt_chunk", "Chunk prompt template error: missing {text}"
+                        else:
+                            chunk_tasks = []
+                            for chunk_item_text in chunks:
+                                messages_chunk = [{"role": "user", "content": current_chunk_prompt_str.format(text=chunk_item_text)}]
+                                chunk_tasks.append(litellm.acompletion(model=model, messages=messages_chunk, **_final_completion_kwargs))
+
+                            try:
+                                chunk_responses = await asyncio.gather(*chunk_tasks, return_exceptions=True)
+                                for i_chunk, response_chunk_or_exc in enumerate(chunk_responses):
+                                    if isinstance(response_chunk_or_exc, Exception):
+                                        chunk_summaries_list.append(f"[Error in chunk {i_chunk+1}]")
+                                        raw_chunk_outputs_list.append(f"Chunk {i_chunk+1} Error: {str(response_chunk_or_exc)}")
+                                    elif response_chunk_or_exc.choices and response_chunk_or_exc.choices[0].message:
+                                        chunk_summaries_list.append(response_chunk_or_exc.choices[0].message.content.strip())
+                                        raw_chunk_outputs_list.append(f"Chunk {i_chunk+1} Raw: {str(response_chunk_or_exc)}")
+                                    else:
+                                        chunk_summaries_list.append("")
+                                        raw_chunk_outputs_list.append(f"Chunk {i_chunk+1} Raw (empty): {str(response_chunk_or_exc)}")
+                            except Exception as e_gather_chunks:
+                                 summary_text, raw_llm_response_agg = "error", f"Error gathering chunk summaries: {e_gather_chunks}"
+
+                        if not summary_text.startswith("error"): # If chunk summarization part was okay
+                            intermediate_summary = "\n\n".join(chunk_summaries_list)
+                            raw_llm_response_agg = "\n---\n".join(raw_chunk_outputs_list)
+
+                            if _actual_combine_prompt and len(chunks) > 1:
+                                if "{text}" not in _actual_combine_prompt:
+                                    summary_text = intermediate_summary
+                                    raw_llm_response_agg += "\n---\nWarning: Combine prompt invalid, using intermediate."
+                                else:
+                                    try:
+                                        messages_combine = [{"role": "user", "content": _actual_combine_prompt.format(text=intermediate_summary)}]
+                                        response_combine = await litellm.acompletion(model=model, messages=messages_combine, **_final_completion_kwargs)
+                                        summary_text = response_combine.choices[0].message.content.strip() if response_combine.choices and response_combine.choices[0].message else ""
+                                        raw_llm_response_agg += f"\n---\nFinal Combined Summary Raw: {str(response_combine)}"
+                                    except Exception as e_combine:
+                                        summary_text = f"[Error combining: {intermediate_summary[:100]}...]"
+                                        raw_llm_response_agg += f"\n---\nError combining summaries: {e_combine}"
+                            else:
+                                summary_text = intermediate_summary
+
+                if current_use_cache and self.cache and not summary_text.startswith("error_") and not summary_text.startswith("[Error"):
+                    try: self.cache.set(cache_key_tuple, {"summary": summary_text, "raw_llm_output": raw_llm_response_agg})
+                    except Exception as e: print(f"Warning: Async cache set failed for summarize. Error: {e}")
+
+        return {"original_text": original_text_for_df, "summary": summary_text, "raw_llm_output": raw_llm_response_agg}
+
+    async def summarize_text_llm_async(
+        self, text_series: pd.Series, model: str, prompt_template_str: Optional[str]=None,
+        chunk_prompt_template_str: Optional[str]=None, combine_prompt_template_str: Optional[str]=None,
+        temperature: float=0.0, use_chunking: bool=True, chunk_size: int=1000, chunk_overlap: int=100,
+        use_cache: Optional[bool]=None, concurrency_limit: Optional[int]=None, return_exceptions: bool=True,
+        max_length: Optional[int]=None, min_length: Optional[int]=None, **litellm_kwargs
+    ) -> pd.DataFrame:
+        """
+        Asynchronously summarizes texts using LiteLLM, with support for chunking.
+
+        Args:
+            text_series (pd.Series): Series containing texts to summarize.
+            model (str): The LiteLLM model string.
+            prompt_template_str (Optional[str], optional): Prompt for direct summarization
+                (if `use_chunking` is False or as fallback). Defaults to a standard summarization prompt.
+            chunk_prompt_template_str (Optional[str], optional): Prompt for individual chunks.
+            combine_prompt_template_str (Optional[str], optional): Prompt for combining chunk summaries.
+            temperature (float, optional): LLM temperature. Defaults to 0.0.
+            use_chunking (bool, optional): Whether to use chunking. Defaults to True.
+            chunk_size (int, optional): Character size for chunks. Defaults to 1000.
+            chunk_overlap (int, optional): Character overlap for chunks. Defaults to 100.
+            use_cache (Optional[bool], optional): Whether to use caching. Overrides instance default.
+            concurrency_limit (Optional[int], optional): Max concurrent LLM calls. Defaults to None.
+            return_exceptions (bool, optional): If True, exceptions are caught. Defaults to True.
+            max_length (Optional[int], optional): If provided, passed as `max_tokens` to LiteLLM,
+                                                  unless `max_tokens` is in `litellm_kwargs`.
+            min_length (Optional[int], optional): Currently a placeholder, not directly used.
+            **litellm_kwargs: Additional arguments for `litellm.acompletion`.
+
+        Returns:
+            pd.DataFrame: DataFrame with ["original_text", "summary", "raw_llm_output"].
+                          Failed items will have "error" in "summary".
+        """
+        cols = ["original_text", "summary", "raw_llm_output"]
+        if not LITELLM_AVAILABLE: return pd.DataFrame(columns=cols)
+        if not isinstance(text_series, pd.Series): return pd.DataFrame(columns=cols)
+        if text_series.empty: return pd.DataFrame(columns=cols)
+
+        use_cache_flag = use_cache if use_cache is not None else self.use_cache_default
+        kw_main = {**litellm_kwargs}
+        if 'temperature' not in kw_main: kw_main['temperature'] = temperature
+        if max_length and 'max_tokens' not in kw_main: kw_main['max_tokens'] = max_length
+
+        direct_prompt = prompt_template_str if prompt_template_str else "Please summarize the following text concisely: {text}"
+        if "{text}" not in direct_prompt:
+            return pd.DataFrame([{"original_text":str(t),"summary":"error_prompt_direct","raw_llm_output":"Direct prompt error"} for t in text_series], columns=cols)
+        if use_chunking and chunk_prompt_template_str and "{text}" not in chunk_prompt_template_str: # Check chunk_prompt only if used
+            return pd.DataFrame([{"original_text":str(t),"summary":"error_prompt_chunk","raw_llm_output":"Chunk prompt error"} for t in text_series], columns=cols)
+
+        tasks = []
+        sem = asyncio.Semaphore(concurrency_limit) if concurrency_limit and concurrency_limit > 0 else None
+        async def wrapper(text):
+            if sem: async with sem: return await self._summarize_text_single_async(text, model, direct_prompt, chunk_prompt_template_str, combine_prompt_template_str, temperature, use_chunking, chunk_size, chunk_overlap, use_cache_flag, kw_main)
+            else: return await self._summarize_text_single_async(text, model, direct_prompt, chunk_prompt_template_str, combine_prompt_template_str, temperature, use_chunking, chunk_size, chunk_overlap, use_cache_flag, kw_main)
+        for txt_in in text_series: tasks.append(wrapper(txt_in))
+        raw_res = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
+
+        proc_res = []
+        for i, r_exc in enumerate(raw_res):
+            orig_txt = str(text_series.iloc[i]) if pd.notna(text_series.iloc[i]) else ""
+            if isinstance(r_exc, Exception): proc_res.append({"original_text":orig_txt, "summary":"error", "raw_llm_output":str(r_exc)})
+            else: proc_res.append(r_exc)
+        if self.cache:
+            try: self.cache.close()
+            except Exception as e: print(f"Warning: Error closing cache: {e}")
+        return pd.DataFrame(proc_res, columns=cols)
 
     def categorize_text_llm(
         self,
         text_series: pd.Series,
-        categories: List[str],
-        model: str, # Changed from llm_provider and model_name
-        prompt_template_str: Optional[str] = None,
-        multi_label: bool = False,
-        temperature: float = 0.0,
-        **litellm_kwargs # Renamed from llm_config
-    ) -> pd.DataFrame:
-        """
-        Categorizes texts into predefined categories using a specified LLM via LiteLLM.
 
         Args:
             text_series (pd.Series): Series containing texts to categorize.
@@ -603,6 +1447,8 @@ class NLPlotLLM():
                                         The output 'category' column will be a string.
                                         Defaults to False.
             temperature (float, optional): Temperature for LLM generation. Defaults to 0.0.
+            use_cache (Optional[bool], optional): Whether to use caching for this specific call.
+                                                 If None, uses the instance's default setting. Defaults to None.
             **litellm_kwargs: Additional keyword arguments to pass directly to `litellm.completion`.
                               This can include provider-specific parameters like `api_key`, `api_base`,
                               `max_tokens`, `top_p`, `frequency_penalty`, `presence_penalty`, etc.
@@ -674,84 +1520,95 @@ class NLPlotLLM():
 
             if not original_text_for_df.strip():
                 raw_llm_response_content = "Input text was empty or whitespace."
+                # parsed_categories remains as default (empty list or "unknown")
             else:
-                try:
-                    prompt_to_format = final_prompt_template_str
-                    # Format the prompt string
-                    # Langchain's PromptTemplate could be used here for more robust formatting if needed
-                    # from langchain_core.prompts import PromptTemplate
-                    # prompt_obj = PromptTemplate.from_template(prompt_to_format)
-                    # formatted_content_for_llm = prompt_obj.format(text=original_text_for_df, categories=category_list_str)
-                    # For now, simple .format(), ensure all placeholders are filled
-                    format_args = {"text": original_text_for_df}
-                    if "{categories}" in prompt_to_format :
-                        format_args["categories"] = category_list_str
+                # --- Cache Key Generation ---
+                cacheable_kwargs_items = sorted(
+                    (k, v) for k, v in litellm_kwargs.items()
+                    if k in ("temperature", "max_tokens", "top_p")
+                )
+                cache_key_tuple = (
+                    "categorize_text_llm", model, final_prompt_template_str,
+                    original_text_for_df, tuple(sorted(categories)), multi_label, # Add categories and multi_label
+                    tuple(cacheable_kwargs_items)
+                )
 
-                    formatted_content_for_llm = prompt_to_format.format(**format_args)
+                cached_result = None
+                current_use_cache_for_call = use_cache if use_cache is not None else self.use_cache_default
+                if current_use_cache_for_call and self.cache:
+                    try:
+                        cached_result = self.cache.get(cache_key_tuple)
+                    except Exception as e:
+                        print(f"Warning: Cache get failed for key {cache_key_tuple}. Error: {e}")
 
-                    messages = [{"role": "user", "content": formatted_content_for_llm}]
+                if cached_result is not None:
+                    parsed_categories = cached_result["categories_result"]
+                    raw_llm_response_content = cached_result["raw_llm_output"]
+                    # print(f"Cache HIT for categorize: {original_text_for_df[:30]}...") # For debugging
+                else:
+                    # print(f"Cache MISS for categorize: {original_text_for_df[:30]}...") # For debugging
+                    try:
+                        prompt_to_format = final_prompt_template_str
+                        format_args = {"text": original_text_for_df}
+                        if "{categories}" in prompt_to_format:
+                            format_args["categories"] = category_list_str
+                        formatted_content_for_llm = prompt_to_format.format(**format_args)
+                        messages = [{"role": "user", "content": formatted_content_for_llm}]
 
-                    valid_litellm_params = {"model", "messages", "temperature", "api_key", "api_base", "max_tokens", "top_p", "frequency_penalty", "presence_penalty", "stream", "stop", "user", "custom_llm_provider"}
-                    completion_kwargs = {k: v for k, v in litellm_kwargs.items() if k in valid_litellm_params}
-                    if 'temperature' not in completion_kwargs:
-                        completion_kwargs['temperature'] = temperature
+                        completion_kwargs = {k: v for k, v in litellm_kwargs.items()}
+                        if 'temperature' not in completion_kwargs:
+                            completion_kwargs['temperature'] = temperature
 
-                    response = litellm.completion(
-                        model=model,
-                        messages=messages,
-                        **completion_kwargs
-                    )
-                    if response.choices and response.choices[0].message:
-                        raw_llm_response_content = response.choices[0].message.content or ""
-                    else:
-                        raw_llm_response_content = str(response)
+                        response = litellm.completion(model=model, messages=messages, **completion_kwargs)
 
-                    processed_output = raw_llm_response_content.strip().lower()
+                        if response.choices and response.choices[0].message:
+                            raw_llm_response_content = response.choices[0].message.content or ""
+                        else:
+                            raw_llm_response_content = str(response)
 
-                    if multi_label:
-                        found_cats_raw = [cat.strip() for cat in processed_output.split(',')]
-                        parsed_categories = [
-                            original_cat for original_cat in categories
-                            if original_cat.lower() in [fcr.lower() for fcr in found_cats_raw if fcr and fcr != 'none']
-                        ]
-                    else: # Single label
-                        parsed_categories = "unknown" # Default if no match
-                        exact_match_found = False
-                        for cat_original_case in categories:
-                            if cat_original_case.lower() == processed_output:
-                                parsed_categories = cat_original_case
-                                exact_match_found = True
-                                break
-                        if not exact_match_found: # Fallback to substring match if no exact match
+                        processed_output = raw_llm_response_content.strip().lower()
+                        if multi_label:
+                            found_cats_raw = [cat.strip() for cat in processed_output.split(',')]
+                            parsed_categories = [
+                                original_cat for original_cat in categories
+                                if original_cat.lower() in [fcr.lower() for fcr in found_cats_raw if fcr and fcr != 'none']
+                            ]
+                        else:
+                            parsed_categories = "unknown"
+                            exact_match_found = False
                             for cat_original_case in categories:
-                                if cat_original_case.lower() in processed_output: # Check if category is IN output
+                                if cat_original_case.lower() == processed_output:
                                     parsed_categories = cat_original_case
-                                    break
-                        if parsed_categories == "unknown" and processed_output in ["unknown", "none"]:
-                             pass # Keep as unknown
+                                    exact_match_found = True; break
+                            if not exact_match_found:
+                                for cat_original_case in categories:
+                                    if cat_original_case.lower() in processed_output:
+                                        parsed_categories = cat_original_case; break
+                            if parsed_categories == "unknown" and processed_output in ["unknown", "none"]: pass
 
-                except ImportError:
-                    print("LiteLLM is not installed. Cannot perform categorization.")
-                    parsed_categories = [] if multi_label else "error"
-                    raw_llm_response_content = "LiteLLM not installed."
-                except litellm.exceptions.AuthenticationError as e:
-                    print(f"LiteLLM Authentication Error: {e}")
-                    parsed_categories = [] if multi_label else "error"
-                    raw_llm_response_content = f"AuthenticationError: {e}"
-                except litellm.exceptions.APIConnectionError as e:
-                    print(f"LiteLLM API Connection Error: {e}")
-                    parsed_categories = [] if multi_label else "error"
-                    raw_llm_response_content = f"APIConnectionError: {e}"
-                except litellm.exceptions.RateLimitError as e:
-                    print(f"LiteLLM Rate Limit Error: {e}")
-                    parsed_categories = [] if multi_label else "error"
-                    raw_llm_response_content = f"RateLimitError: {e}"
-                except Exception as e:
-                    print(f"Error categorizing text '{original_text_for_df[:50]}...': {e}")
-                    parsed_categories = [] if multi_label else "error"
-                    raw_llm_response_content = str(e)
+                        if current_use_cache_for_call and self.cache:
+                            try:
+                                self.cache.set(cache_key_tuple, {"categories_result": parsed_categories, "raw_llm_output": raw_llm_response_content})
+                            except Exception as e:
+                                print(f"Warning: Cache set failed for key {cache_key_tuple}. Error: {e}")
+
+                    except ImportError:
+                        parsed_categories = [] if multi_label else "error"; raw_llm_response_content = "LiteLLM not installed."
+                        print("LiteLLM is not installed. Cannot perform categorization.")
+                    except litellm.exceptions.AuthenticationError as e:
+                        parsed_categories = [] if multi_label else "error"; raw_llm_response_content = f"AuthenticationError: {e}"; print(f"LiteLLM Authentication Error: {e}")
+                    except litellm.exceptions.APIConnectionError as e:
+                        parsed_categories = [] if multi_label else "error"; raw_llm_response_content = f"APIConnectionError: {e}"; print(f"LiteLLM API Connection Error: {e}")
+                    except litellm.exceptions.RateLimitError as e:
+                        parsed_categories = [] if multi_label else "error"; raw_llm_response_content = f"RateLimitError: {e}"; print(f"LiteLLM Rate Limit Error: {e}")
+                    except Exception as e:
+                        parsed_categories = [] if multi_label else "error"; raw_llm_response_content = str(e); print(f"Error categorizing text '{original_text_for_df[:50]}...': {e}")
 
             results.append({"text": original_text_for_df, category_col_name: parsed_categories, "raw_llm_output": raw_llm_response_content})
+
+        if self.cache: # Close cache if opened by this instance
+            try: self.cache.close()
+            except Exception as e: print(f"Warning: Error closing cache: {e}")
 
         return pd.DataFrame(results, columns=default_columns)
 
@@ -841,6 +1698,7 @@ class NLPlotLLM():
         use_chunking: bool = True, # Whether to use chunking for long texts
         chunk_size: int = 1000,    # Default chunk size for summarization
         chunk_overlap: int = 100,  # Default chunk overlap
+        use_cache: Optional[bool] = None, # Added for method-specific cache control
         **litellm_kwargs
     ) -> pd.DataFrame:
         """
@@ -877,6 +1735,8 @@ class NLPlotLLM():
                 Defaults to 1000.
             chunk_overlap (int, optional): The character overlap between text chunks when `use_chunking` is True.
                 Defaults to 100.
+            use_cache (Optional[bool], optional): Whether to use caching for this specific call.
+                                                 If None, uses the instance's default setting. Defaults to None.
             **litellm_kwargs: Additional keyword arguments to pass directly to `litellm.completion`.
                               This can include provider-specific parameters like `api_key`, `api_base`,
                               `max_tokens`, `top_p`, `frequency_penalty`, `presence_penalty`, etc.
@@ -903,26 +1763,20 @@ class NLPlotLLM():
         if text_series.empty:
             return pd.DataFrame(columns=default_columns)
 
-        # Prepare litellm_kwargs by mapping some common expected keys like openai_api_key to litellm's api_key
-        # and filtering for valid litellm.completion parameters.
-        current_litellm_kwargs = litellm_kwargs.copy()
-        if 'openai_api_key' in current_litellm_kwargs and 'api_key' not in current_litellm_kwargs:
-            current_litellm_kwargs['api_key'] = current_litellm_kwargs.pop('openai_api_key')
-        # Add other mappings if necessary (e.g. for Azure keys, specific provider args)
+        if text_series.empty:
+            return pd.DataFrame(columns=default_columns)
 
-        valid_litellm_params = {"model", "messages", "temperature", "api_key", "api_base", "max_tokens", "top_p", "frequency_penalty", "presence_penalty", "stream", "stop", "user", "custom_llm_provider"}
-        final_completion_kwargs = {k: v for k, v in current_litellm_kwargs.items() if k in valid_litellm_params}
-        if 'temperature' not in final_completion_kwargs: # Ensure method's temperature is used
-            final_completion_kwargs['temperature'] = temperature
-        if max_length is not None and 'max_tokens' not in final_completion_kwargs: # Simple mapping for max_length
-            final_completion_kwargs['max_tokens'] = max_length
-        # min_length is harder to directly map to max_tokens without more complex logic.
+        current_use_cache_for_call = use_cache if use_cache is not None else self.use_cache_default
 
-        # Default prompt for direct summarization (if not chunking or as fallback)
-        current_direct_prompt_template_str = prompt_template_str if prompt_template_str else "Please summarize the following text concisely: {text}"
-        if "{text}" not in current_direct_prompt_template_str:
+        _litellm_kwargs = {**litellm_kwargs} # Use a local copy
+        if 'temperature' not in _litellm_kwargs:
+            _litellm_kwargs['temperature'] = temperature
+        if max_length is not None and 'max_tokens' not in _litellm_kwargs:
+             _litellm_kwargs['max_tokens'] = max_length
+
+        final_direct_prompt_template_str = prompt_template_str if prompt_template_str else "Please summarize the following text concisely: {text}"
+        if "{text}" not in final_direct_prompt_template_str:
             print("Error: Direct summarization prompt template must include '{text}' placeholder.")
-            # Return error for all texts if the main prompt is bad
             return pd.DataFrame(
                 [{'original_text': str(txt) if pd.notna(txt) else "", 'summary': 'error_prompt_direct', 'raw_llm_output': "Direct prompt error"} for txt in text_series],
                 columns=default_columns
@@ -937,89 +1791,117 @@ class NLPlotLLM():
             if not original_text_for_df.strip():
                 summary_text = ""
                 raw_llm_response_agg = "Input text was empty or whitespace."
-            elif not use_chunking:
-                try:
-                    messages = [{"role": "user", "content": current_direct_prompt_template_str.format(text=original_text_for_df)}]
-                    response = litellm.completion(model=model, messages=messages, **final_completion_kwargs)
-                    summary_text = response.choices[0].message.content.strip() if response.choices and response.choices[0].message else ""
-                    raw_llm_response_agg = str(response) # Store full response object as string for raw output
-                except Exception as e:
-                    print(f"Error during direct summarization for text '{original_text_for_df[:50]}...': {e}")
-                    summary_text = "error"
-                    raw_llm_response_agg = f"Direct summarization error: {e}"
-            else: # use_chunking is True
-                if not LANGCHAIN_SPLITTERS_AVAILABLE: # Check if we can even chunk
-                    print("Warning: Langchain text splitters not available for chunking. Attempting direct summarization.")
-                    try: # Fallback to direct summarization
-                        messages = [{"role": "user", "content": current_direct_prompt_template_str.format(text=original_text_for_df)}]
-                        response = litellm.completion(model=model, messages=messages, **final_completion_kwargs)
-                        summary_text = response.choices[0].message.content.strip() if response.choices and response.choices[0].message else ""
-                        raw_llm_response_agg = f"Chunking skipped (splitters unavailable). Direct summary raw: {str(response)}"
+            else:
+                # --- Cache Key Generation ---
+                cacheable_kwargs_items = sorted(
+                    (k, v) for k, v in _litellm_kwargs.items()
+                    if k in ("temperature", "max_tokens", "top_p")
+                )
+                _effective_chunk_prompt = chunk_prompt_template_str if chunk_prompt_template_str else "Concisely summarize this piece of text: {text}"
+                _effective_combine_prompt = combine_prompt_template_str
+
+                # Estimate number of chunks for cache key consistency if combine_prompt is used
+                num_chunks_for_key = 0
+                if use_chunking and LANGCHAIN_SPLITTERS_AVAILABLE:
+                    temp_chunks_for_key = self._chunk_text(original_text_for_df, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+                    num_chunks_for_key = len(temp_chunks_for_key)
+
+                cache_key_tuple = (
+                    "summarize_text_llm", model,
+                    final_direct_prompt_template_str,
+                    _effective_chunk_prompt if use_chunking else None,
+                    _effective_combine_prompt if use_chunking and num_chunks_for_key > 1 else None,
+                    original_text_for_df,
+                    use_chunking, chunk_size if use_chunking else None, chunk_overlap if use_chunking else None,
+                    tuple(cacheable_kwargs_items)
+                )
+
+                cached_result = None
+                if current_use_cache_for_call and self.cache:
+                    try:
+                        cached_result = self.cache.get(cache_key_tuple)
                     except Exception as e:
-                        print(f"Error during fallback direct summarization for text '{original_text_for_df[:50]}...': {e}")
-                        summary_text = "error"
-                        raw_llm_response_agg = f"Fallback direct summarization error: {e}"
-                else: # Proceed with chunking
-                    chunks = self._chunk_text(
-                        original_text_for_df,
-                        chunk_size=chunk_size,
-                        chunk_overlap=chunk_overlap
-                        # strategy could be a parameter for _chunk_text if needed
-                    )
-                    if not chunks:
-                        summary_text = ""
-                        raw_llm_response_agg = "Text was empty or too short after attempting to chunk."
-                    else:
-                        chunk_summaries_list = []
-                        raw_chunk_outputs_list = []
+                        print(f"Warning: Cache get failed for key {cache_key_tuple}. Error: {e}")
 
-                        current_chunk_prompt_str = chunk_prompt_template_str if chunk_prompt_template_str else "Concisely summarize this piece of text: {text}"
-                        if "{text}" not in current_chunk_prompt_str:
-                            summary_text = "error_prompt_chunk"
-                            raw_llm_response_agg = "Chunk prompt template error: missing {text}"
-                            results.append({"original_text": original_text_for_df, "summary": summary_text, "raw_llm_output": raw_llm_response_agg})
-                            continue # to next text_input
-
-                        for i, chunk_item_text in enumerate(chunks):
+                if cached_result is not None:
+                    summary_text = cached_result["summary"]
+                    raw_llm_response_agg = cached_result["raw_llm_output"]
+                else:
+                    if not use_chunking:
+                        try:
+                            messages = [{"role": "user", "content": final_direct_prompt_template_str.format(text=original_text_for_df)}]
+                            response = litellm.completion(model=model, messages=messages, **_litellm_kwargs)
+                            summary_text = response.choices[0].message.content.strip() if response.choices and response.choices[0].message else ""
+                            raw_llm_response_agg = str(response)
+                        except Exception as e:
+                            print(f"Error during direct summarization for text '{original_text_for_df[:50]}...': {e}")
+                            summary_text, raw_llm_response_agg = "error", f"Direct summarization error: {e}"
+                    else: # use_chunking is True
+                        if not LANGCHAIN_SPLITTERS_AVAILABLE:
+                            print("Warning: Langchain text splitters not available. Attempting direct summarization.")
                             try:
-                                messages_chunk = [{"role": "user", "content": current_chunk_prompt_str.format(text=chunk_item_text)}]
-                                response_chunk = litellm.completion(model=model, messages=messages_chunk, **final_completion_kwargs)
-                                chunk_summary = response_chunk.choices[0].message.content.strip() if response_chunk.choices and response_chunk.choices[0].message else ""
-                                chunk_summaries_list.append(chunk_summary)
-                                raw_chunk_outputs_list.append(f"Chunk {i+1}/{len(chunks)} Summary Raw: {str(response_chunk)}")
+                                messages = [{"role": "user", "content": final_direct_prompt_template_str.format(text=original_text_for_df)}]
+                                response = litellm.completion(model=model, messages=messages, **_litellm_kwargs)
+                                summary_text = response.choices[0].message.content.strip() if response.choices and response.choices[0].message else ""
+                                raw_llm_response_agg = f"Chunking skipped. Direct summary raw: {str(response)}"
                             except Exception as e:
-                                error_msg_chunk = f"Error summarizing chunk {i+1}/{len(chunks)}: {e}"
-                                print(error_msg_chunk)
-                                chunk_summaries_list.append(f"[Error in chunk {i+1}]")
-                                raw_chunk_outputs_list.append(error_msg_chunk)
-
-                        intermediate_summary = "\n\n".join(chunk_summaries_list) # Join with double newline for better separation
-                        raw_llm_response_agg = "\n---\n".join(raw_chunk_outputs_list)
-
-                        if combine_prompt_template_str and len(chunks) > 1:
-                            current_combine_prompt_val = combine_prompt_template_str
-                            if "{text}" not in current_combine_prompt_val:
-                                 print(f"Warning: combine_prompt_template_str does not contain '{{text}}'. Using combined chunk summaries directly.")
-                                 summary_text = intermediate_summary
-                            else:
-                                try:
-                                    messages_combine = [{"role": "user", "content": current_combine_prompt_val.format(text=intermediate_summary)}]
-                                    response_combine = litellm.completion(model=model, messages=messages_combine, **final_completion_kwargs)
-                                    summary_text = response_combine.choices[0].message.content.strip() if response_combine.choices and response_combine.choices[0].message else ""
-                                    raw_llm_response_agg += f"\n---\nFinal Combined Summary Raw: {str(response_combine)}"
-                                except Exception as e:
-                                    error_msg_combine = f"Error combining chunk summaries: {e}"
-                                    print(error_msg_combine)
-                                    summary_text = f"[Error combining summaries, using intermediate: {intermediate_summary[:100]}...]"
-                                    raw_llm_response_agg += f"\n---\n{error_msg_combine}"
+                                print(f"Error during fallback direct summarization: {e}"); summary_text, raw_llm_response_agg = "error", f"Fallback direct summarization error: {e}"
                         else:
-                            summary_text = intermediate_summary
+                            chunks = self._chunk_text(original_text_for_df, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+                            if not chunks:
+                                summary_text, raw_llm_response_agg = "", "Text too short after chunking."
+                            else:
+                                chunk_summaries_list, raw_chunk_outputs_list = [], []
+                                current_chunk_prompt = _effective_chunk_prompt
+                                if "{text}" not in current_chunk_prompt: # Should be caught by main async method too
+                                    summary_text, raw_llm_response_agg = "error_prompt_chunk", "Chunk prompt error"
+                                    # This early exit was missing, adding it:
+                                    results.append({"original_text": original_text_for_df, "summary": summary_text, "raw_llm_output": raw_llm_response_agg}); continue
+
+
+                                for i, chunk_item_text in enumerate(chunks):
+                                    try:
+                                        messages_chunk = [{"role": "user", "content": current_chunk_prompt.format(text=chunk_item_text)}]
+                                        response_chunk = litellm.completion(model=model, messages=messages_chunk, **_litellm_kwargs)
+                                        chunk_summary = response_chunk.choices[0].message.content.strip() if response_chunk.choices and response_chunk.choices[0].message else ""
+                                        chunk_summaries_list.append(chunk_summary)
+                                        raw_chunk_outputs_list.append(f"Chunk {i+1}/{len(chunks)} Raw: {str(response_chunk)}")
+                                    except Exception as e_chunk:
+                                        chunk_summaries_list.append(f"[Err chunk {i+1}]"); raw_chunk_outputs_list.append(f"Chunk {i+1} Err: {e_chunk}")
+
+                                intermediate_summary = "\n\n".join(chunk_summaries_list)
+                                raw_llm_response_agg = "\n---\n".join(raw_chunk_outputs_list)
+
+                                if _effective_combine_prompt and len(chunks) > 1:
+                                    if "{text}" not in _effective_combine_prompt:
+                                        summary_text = intermediate_summary
+                                        raw_llm_response_agg += "\n---\nWarn: Combine prompt invalid."
+                                    else:
+                                        try:
+                                            messages_combine = [{"role": "user", "content": _effective_combine_prompt.format(text=intermediate_summary)}]
+                                            response_combine = litellm.completion(model=model, messages=messages_combine, **_litellm_kwargs)
+                                            summary_text = response_combine.choices[0].message.content.strip() if response_combine.choices and response_combine.choices[0].message else ""
+                                            raw_llm_response_agg += f"\n---\nCombined Raw: {str(response_combine)}"
+                                        except Exception as e_combine:
+                                            summary_text = f"[Err combine: {intermediate_summary[:100]}...]"; raw_llm_response_agg += f"\n---\nErr combine: {e_combine}"
+                                else:
+                                    summary_text = intermediate_summary
+
+                    if current_use_cache_for_call and self.cache and not summary_text.startswith("error_") and not summary_text.startswith("[Err"):
+                        try:
+                            self.cache.set(cache_key_tuple, {"summary": summary_text, "raw_llm_output": raw_llm_response_agg})
+                        except Exception as e:
+                            print(f"Warning: Cache set failed for key {cache_key_tuple}. Error: {e}")
 
             results.append({
                 "original_text": original_text_for_df,
                 "summary": summary_text,
-                "raw_llm_output": raw_llm_resp
+                "raw_llm_output": raw_llm_response_agg
             })
+
+        if self.cache:
+            try: self.cache.close()
+            except Exception as e: print(f"Warning: Error closing cache: {e}")
 
         return pd.DataFrame(results, columns=default_columns)
 
