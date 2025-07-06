@@ -18,6 +18,16 @@ nlplot_llm: Enhanced Natural Language Processing analysis and visualization with
 - **Asynchronous Operations:** Provides asynchronous versions of LLM analysis methods (`*_async`) for improved performance with multiple texts.
 - **Text Chunking:** Helper methods for splitting long texts, useful for LLM preprocessing (uses Langchain TextSplitters).
 
+## Acknowledgements
+
+This library is built upon the excellent `nlplot` library, originally developed by Takanobu Nozawa (takapy0210). We extend our sincere gratitude for the original author's great work and elegant design.
+
+The core visualization functionalities are inherited from the original work. `nlplot_llm` focuses on extending it with LLM-based analysis features.
+
+- **Original Repository:** https://github.com/takapy0210/nlplot
+- **Author's Blog Post (Japanese):** https://www.takapy.work/entry/2020/05/17/192947
+
+
 ## Description
 `nlplot_llm` extends the original `nlplot` library by integrating robust LLM capabilities through LiteLLM. This allows for advanced text analysis tasks like sentiment analysis, categorization, and summarization across a wide range of language models—with customizable prompts, response caching, and asynchronous operations—while retaining useful NLP visualizations.
 
@@ -29,8 +39,6 @@ You can draw the following graph
 4. [wordcloud](https://github.com/takapy0210/takapy_blog/blob/master/nlp/twitter_analytics_using_nlplot/wordcloud.png)
 5. [co-occurrence networks](https://htmlpreview.github.io/?https://github.com/takapy0210/takapy_blog/blob/master/nlp/twitter_analytics_using_nlplot/2020-05-17_Co-occurrence%20network.html)
 6. [sunburst chart](https://htmlpreview.github.io/?https://github.com/takapy0210/takapy_blog/blob/master/nlp/twitter_analytics_using_nlplot/2020-05-17_sunburst%20chart.html)
-
-（Tested in English and Japanese）
 
 ## Requirement
 - Python 3.7+
