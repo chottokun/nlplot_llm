@@ -140,9 +140,28 @@ class NLPlotLLM():
         self.df = df.copy()
         self.target_col = target_col
         self.df.dropna(subset=[self.target_col], inplace=True)
-        if not self.df.empty and not pd.isna(self.df[self.target_col].iloc[0]) and \
-           not isinstance(self.df[self.target_col].iloc[0], list):
-            self.df.loc[:, self.target_col] = self.df[self.target_col].astype(str).map(lambda x: x.split())
+
+        if not self.df.empty and self.target_col in self.df.columns:
+            first_item = self.df[self.target_col].iloc[0]
+            # Process if the first item is a string and not already a list (for auto-splitting)
+            if isinstance(first_item, str) and pd.notna(first_item):
+                # This check ensures we only try to split if it's a non-NA string.
+                # The original NLPlot assumed string inputs would be tokenized into lists of words.
+                # If it's already a list (e.g. from get_nlplot_instance_for_traditional_nlp),
+                # this block will be skipped.
+                self.df.loc[:, self.target_col] = self.df[self.target_col].astype(str).map(lambda x: x.split())
+            # If first_item is already a list, or if it's some other non-string scalar,
+            # we assume it's either correctly pre-processed or not intended for splitting here.
+        elif self.df.empty and self.target_col not in self.df.columns :
+             print(f"Warning: DataFrame is empty and target column '{self.target_col}' not found. Initializing with an empty column.")
+             self.df = pd.DataFrame({self.target_col: pd.Series([], dtype=object)})
+        elif self.df.empty :
+             print(f"Warning: DataFrame is empty after processing. Target column '{self.target_col}' might be present but with no data.")
+             # Ensure column exists even if df is empty, matching constructor expectation for plotting methods
+             if self.target_col not in self.df.columns:
+                 self.df[self.target_col] = pd.Series([], dtype=object)
+
+
         self.output_file_path = output_file_path
         # Determine initial font_path based on user input and DEFAULT_FONT_PATH
         if font_path and os.path.exists(font_path):
