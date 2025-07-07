@@ -24,9 +24,18 @@ def get_nlplot_instance_for_traditional_nlp(input_text_lines: list[str], languag
     """
     Creates an NLPlotLLM instance suitable for traditional NLP tasks.
     Tokenizes input text based on the selected language.
+    Uses a specific Japanese font for word clouds if language is Japanese and font exists.
     """
-    # TODO: Consider making font_path configurable via Streamlit UI if WordCloud is added.
-    font_path_ui = None # Placeholder
+    font_to_use = None # Default font path
+    if language == language_options[1]: # "Japanese (Janome for tokenization)"
+        if os.path.exists(DEFAULT_JP_FONT_PATH): # DEFAULT_JP_FONT_PATH is defined globally
+            font_to_use = DEFAULT_JP_FONT_PATH
+        else:
+            st.warning(
+                f"推奨される日本語フォントファイルが見つかりません: {DEFAULT_JP_FONT_PATH}. "
+                "Word Cloudの日本語表示が正しく行われない可能性があります。"
+                "README.mdの手順に従い、`fonts/ipaexg.ttf` を配置してください。"
+            )
 
     t_janome = None
     if language == language_options[1] and JANOME_AVAILABLE: # "Japanese (Janome for tokenization)"
@@ -38,7 +47,6 @@ def get_nlplot_instance_for_traditional_nlp(input_text_lines: list[str], languag
             # Fallback to space splitting will occur if t_janome remains None
 
     if not input_text_lines:
-        # st.warning("No input text provided for traditional NLP analysis. Using empty DataFrame.")
         # Warning is now issued when `lines` is empty before calling this function.
         df = pd.DataFrame({target_column_name: pd.Series([], dtype='object')})
     else:
@@ -56,7 +64,8 @@ def get_nlplot_instance_for_traditional_nlp(input_text_lines: list[str], languag
                 tokenized_lines.append(line.split())
         df = pd.DataFrame({target_column_name: tokenized_lines})
 
-    return NLPlotLLM(df, target_col=target_column_name, font_path=font_path_ui, use_cache=False)
+    # NLPlotLLMインスタンス生成時にfont_pathを渡す
+    return NLPlotLLM(df, target_col=target_column_name, font_path=font_to_use, use_cache=False)
 
 
 # --- Sidebar for LLM Configuration ---

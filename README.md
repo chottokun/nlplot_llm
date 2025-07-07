@@ -116,6 +116,19 @@ streamlit run streamlit_app.py
 
 Use the sidebar to choose model, prompts, caching, and analysis type.
 
+## Streamlit Demo Notes
+
+### Japanese Word Cloud Font
+To correctly display Japanese characters in word clouds within the Streamlit demo, a Japanese-compatible font file is required.
+
+1.  **Recommended Font**: We recommend using [IPAexGothic (ipaexg.ttf)](https://moji.or.jp/ipafont/ipaex00401/). Download `ipaexg00401.zip` from the link and extract `ipaexg.ttf`.
+2.  **Placement**:
+    *   Create a directory named `fonts` in the root of this repository if it doesn't already exist.
+    *   Place the `ipaexg.ttf` file into this `fonts` directory (i.e., the path should be `fonts/ipaexg.ttf` from the repository root).
+3.  **Usage**: The Streamlit application (`streamlit_app.py`) is configured to automatically look for this font at `fonts/ipaexg.ttf` when "Japanese" is selected as the language for traditional NLP tasks like Word Cloud.
+
+If this font file is not found at the specified location, Japanese characters in word clouds may not render correctly, and you might see garbled text or empty squares.
+
 ## Documentation
 
 Generated with Sphinx in the `docs/` folder. To rebuild:
