@@ -469,9 +469,11 @@ class NLPlotLLM():
         node_trace = self._create_network_trace(trace_type="node", x=node_x, y=node_y, text=node_hover_text, marker={'size': node_marker_sizes, 'line': dict(width=0.5, color=edge_col), 'color': node_marker_colors})
         fig_data = edge_traces + [node_trace]
         fig_layout = go.Layout(title=str(title) if title else "Co-occurrence Network", font=dict(family='Arial', size=12), width=width, height=height, autosize=True, showlegend=False, xaxis=dict(showline=False, zeroline=False, showgrid=False, showticklabels=False, title=''), yaxis=dict(showline=False, zeroline=False, showgrid=False, showticklabels=False, title=''), margin=dict(l=40, r=40, b=85, t=100, pad=0), hovermode='closest', plot_bgcolor=back_col)
-        fig = go.Figure(data=fig_data, layout=fig_layout); iplot(fig)
+        fig = go.Figure(data=fig_data, layout=fig_layout)
+        # iplot(fig) # Remove direct plotting with iplot for better library use
         if save: self.save_plot(fig, title if title else "co_network")
-        gc.collect(); return None
+        gc.collect()
+        return fig # Return the figure object
 
     def _calculate_node_sizes(self, node_size_col: str, sizing_factor: int) -> pd.Series:
         if node_size_col not in self.node_df.columns or self.node_df[node_size_col].isnull().all():

@@ -91,3 +91,45 @@ Streamlitデモへの伝統的NLP機能追加、および関連する多数の�
 これには、N-gram分析、Word Cloud（日本語フォント対応とREADMEへの記載を含む）、日本語テキスト特徴分析のデモ実装、および複数回のデバッグサイクルを通じたバグ修正とStreamlitの状態管理改善が含まれます。
 `status.md` も最新の状態に更新済みです。
 全ての作業が完了したため、本タスクはクローズとなります。
+
+## Future Development Considerations (Traditional NLP Features)
+
+-   [ ] **TF-IDF計算と重要語表示機能の実装**
+    -   [ ] `nlplot_llm.core` にTF-IDF計算および重要語抽出メソッドを追加。
+    -   [ ] StreamlitデモにUIと表示ロジックを追加。
+-   [ ] **KWIC (Keyword in Context) 機能の実装**
+    -   [ ] `nlplot_llm.core` にKWICリスト生成メソッドを追加。
+    -   [ ] StreamlitデモにUIと表示ロジックを追加。
+
+## Streamlit Demo: Additional NLP Visualization Features
+
+-   [x] **1. status.md の更新**
+    -   [x] `status.md` に新しいタスク「Streamlitデモへの追加NLP可視化機能実装」のセクションを作成し、本計画を記載しました。
+-   [x] **2. `nlplot_llm.core.py` の `co_network` メソッド修正**
+    -   [x] `co_network` メソッドが `iplot(fig)` を実行する代わりに、生成した `fig` (Plotly Figureオブジェクト) を返すように修正しました。
+-   [x] **3. Word Count Distribution (`word_distribution`) 機能の実装**
+    -   [x] **UI追加**: `analysis_options` に「Word Count Distribution」を追加しました。
+    -   [x] **オプションUI**: ヒストグラムのビンの数を設定できるUIを追加しました。
+    -   [x] **実装**:
+        -   [x] 選択された言語に応じてトークン化された `NLPlotLLM` インスタンスを取得するようにしました。
+        -   [x] `npt.word_distribution()` を呼び出し、結果を `st.plotly_chart` で表示するようにしました。
+    -   [x] **テスト**: 英語と日本語のテキストで正しく分布が表示されること、オプションが反映されることを確認しました。
+-   [x] **4. Co-occurrence Network (`co_network`) 機能の実装**
+    -   [x] **UI追加**: `analysis_options` に「Co-occurrence Analysis」を追加しました。
+    -   [x] **オプションUI**: ストップワード、最小共起頻度などを設定できるUIを追加しました。
+    -   [x] **実装**:
+        -   [x] 選択された言語に応じてトークン化された `NLPlotLLM` インスタンスを取得するようにしました。
+        -   [x] `npt.build_graph()` を呼び出してグラフデータを構築するようにしました。
+        -   [x] 修正された `npt.co_network()` を呼び出し、返されたFigureオブジェクトを `st.plotly_chart` で表示するようにしました。
+    -   [x] **テスト**: 英語と日本語のテキストでネットワークが正しく表示されること、各種オプションが反映されることを確認しました。
+-   [x] **5. Sunburst Chart (`sunburst`) 機能の実装**
+    -   [x] **UI追加**: 「Co-occurrence Analysis」実行後にサンバーストチャートを表示する「Show Sunburst Chart」ボタンを設けました。
+    -   [x] **オプションUI**: (今回はデフォルトオプションでの表示としました)
+    -   [x] **実装**:
+        -   [x] `build_graph()` の結果（`st.session_state.npt_graph_instance`）を利用して `npt.sunburst()` を呼び出すようにしました。
+        -   [x] 結果のPlotly Figureを `st.plotly_chart` で表示するようにしました。
+    -   [x] **テスト**: 共起ネットワークが構築された後にサンバーストチャートが正しく表示されることを確認しました。
+-   [ ] **6. status.md の最終更新** (Current)
+    -   [ ] 全ての作業が完了したら、`status.md` を最新の状態に更新します。
+-   [ ] **7. 変更のコミットとプルリクエスト**
+    -   [ ] 全ての変更をコミットし、プルリクエストを作成します (ブランチは `feat/streamlit-traditional-nlp-demo` を継続)。

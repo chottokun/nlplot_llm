@@ -161,7 +161,8 @@ analysis_options = [
     "N-gram Analysis (Traditional)",
     "Word Cloud (Traditional)",
     "Japanese Text Analysis (Traditional)",
-    # Add other traditional NLP functions here later e.g. "Co-occurrence Network"
+    "Word Count Distribution (Traditional)",
+    "Co-occurrence Analysis (Traditional)",
 ]
 analysis_type = st.selectbox(
     "Select Analysis",
@@ -191,6 +192,19 @@ ngram_stopwords_str = "" # Comma-separated string for stopwords
 wc_max_words = 100
 wc_stopwords_str = "" # Comma-separated string for stopwords for wordcloud
 # wc_font_path_str = "" # Optional: UI for font path
+
+# Word Count Distribution Options
+wcd_bins = 20 # Default number of bins for histogram
+
+# Co-occurrence Analysis Options
+co_stopwords_str = ""
+co_min_edge_freq = 5
+# For storing the npt instance after build_graph to reuse for sunburst
+if 'npt_graph_instance' not in st.session_state:
+    st.session_state.npt_graph_instance = None
+if 'graph_built_success' not in st.session_state:
+    st.session_state.graph_built_success = False
+
 
 # Sentiment Analysis Options
 prompt_sentiment = ""
@@ -271,6 +285,14 @@ elif analysis_type == "Japanese Text Analysis (Traditional)":
         # Options for this analysis will be primarily for plotting after feature generation.
         # Feature selection for plotting will appear after features are generated.
         pass
+elif analysis_type == "Word Count Distribution (Traditional)":
+    st.subheader("Word Count Distribution Options")
+    wcd_bins = st.number_input("Number of Bins for Histogram", min_value=5, max_value=100, value=wcd_bins, step=5)
+elif analysis_type == "Co-occurrence Analysis (Traditional)":
+    st.subheader("Co-occurrence Analysis Options")
+    co_stopwords_str = st.text_input("Stopwords (comma-separated)", value=co_stopwords_str if co_stopwords_str else "is,a,the,an,and,or,but")
+    co_min_edge_freq = st.number_input("Minimum Edge Frequency", min_value=1, max_value=100, value=co_min_edge_freq, step=1)
+    # Add more options like layout_func, node_size_col if desired
 
 
 # Execute Button
@@ -456,6 +478,76 @@ if st.button(f"Run {analysis_type}"):
                         st.error(f"An error occurred during Japanese Text Analysis feature calculation: {e}")
                         st.session_state.jp_features_df = None
                         st.session_state.show_jp_plot_options = False
+
+            elif analysis_type == "Word Count Distribution (Traditional)":
+                st.info(f"Processing {len(lines)} text document(s) for Word Count Distribution...")
+                npt_traditional = get_nlplot_instance_for_traditional_nlp(lines, selected_language, target_column_name="input_tokens_wcd")
+                try:
+                    with st.spinner("Generating Word Count Distribution Plot..."):
+                        st.subheader("Word Count Distribution")
+                        fig_wcd = npt_traditional.word_distribution(
+                            title="Distribution of Word Counts per Document",
+                            bins=wcd_bins
+                        )
+                        if fig_wcd and fig_wcd.data:
+                            st.plotly_chart(fig_wcd, use_container_width=True)
+                        else:
+                            st.warning("No data to display for Word Count Distribution. Input text might be empty.")
+                except Exception as e:
+                    st.error(f"An error occurred during Word Count Distribution generation: {e}")
+
+            elif analysis_type == "Co-occurrence Analysis (Traditional)":
+                st.info(f"Processing {len(lines)} text document(s) for Co-occurrence Analysis...")
+                npt_co = get_nlplot_instance_for_traditional_nlp(lines, selected_language, target_column_name="input_tokens_co")
+
+                co_stopwords_list = [sw.strip() for sw in co_stopwords_str.split(',') if sw.strip()]
+
+                st.session_state.npt_graph_instance = None # Reset previous instance
+                st.session_state.graph_built_success = False
+
+                try:
+                    with st.spinner("Building graph for Co-occurrence Network..."):
+                        # build_graph modifies the instance in-place
+                        npt_co.build_graph(stopwords=co_stopwords_list, min_edge_frequency=co_min_edge_freq)
+                        st.session_state.npt_graph_instance = npt_co # Store instance for potential Sunburst
+                        st.session_state.graph_built_success = True
+                        st.success("Graph for co-occurrence analysis built successfully.")
+
+                    if st.session_state.graph_built_success:
+                        with st.spinner("Generating Co-occurrence Network plot..."):
+                            st.subheader("Co-occurrence Network")
+                            # co_network method was modified to return a Figure
+                            fig_co_network = npt_co.co_network(
+                                title="Co-occurrence Network",
+                                # Add other parameters from UI if implemented (e.g., layout_func, node_size_col)
+                            )
+                            if fig_co_network and fig_co_network.data:
+                                st.plotly_chart(fig_co_network, use_container_width=True)
+                                # Add button for Sunburst chart
+                                if st.button("Show Sunburst Chart for this Co-occurrence Data", key="show_sunburst_btn"):
+                                    if st.session_state.npt_graph_instance:
+                                        with st.spinner("Generating Sunburst Chart..."):
+                                            st.subheader("Sunburst Chart (from Co-occurrence Data)")
+                                            # TODO: Add UI for Sunburst specific options if needed
+                                            fig_sunburst = st.session_state.npt_graph_instance.sunburst(
+                                                title="Co-occurrence Sunburst"
+                                            )
+                                            if fig_sunburst and fig_sunburst.data:
+                                                st.plotly_chart(fig_sunburst, use_container_width=True)
+                                            else:
+                                                st.warning("Could not generate Sunburst Chart. Graph data might be unsuitable.")
+                                    else:
+                                        st.error("Graph data not available for Sunburst chart. Please re-run Co-occurrence Analysis.")
+
+                            elif hasattr(npt_co, 'node_df') and npt_co.node_df.empty:
+                                st.warning("No nodes found for co-occurrence network. Try adjusting stopwords or minimum edge frequency.")
+                            else:
+                                st.warning("Could not generate Co-occurrence Network. Graph might be empty or too small.")
+
+                except Exception as e:
+                    st.error(f"An error occurred during Co-occurrence Analysis: {e}")
+                    st.session_state.npt_graph_instance = None
+                    st.session_state.graph_built_success = False
 
 
 # This block will now handle the display of plot options and the plot itself,
