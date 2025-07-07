@@ -135,12 +135,12 @@ Streamlitデモへの伝統的NLP機能追加、および関連する多数の�
 
 **Phase 3: Documentation & Finalization**
 
--   [ ] **5. Update `status.md`**: Reflect progress of TF-IDF & KWIC implementation. (Current)
--   [ ] **6. Update `README.md`**: Briefly mention new TF-IDF and KWIC features. Add `scikit-learn` to dependencies if not already covered.
--   [ ] **7. Update Dependencies**: Add `scikit-learn` to `requirements.txt` and/or `setup.py`.
--   [ ] **8. Add Docstrings**: Write detailed docstrings for new methods in `core.py`.
--   [ ] **9. Final Testing**: Overall application testing.
--   [ ] **10. Commit & Pull Request**: Commit all changes and prepare for PR.
+-   [x] **5. Update `status.md`**: Reflect progress of TF-IDF & KWIC implementation. (This update)
+-   [x] **6. Update `README.md`**: Briefly mention new TF-IDF and KWIC features. Add `scikit-learn` to dependencies.
+-   [x] **7. Update Dependencies**: Confirmed `scikit-learn` is in `requirements.txt` (and thus `setup.py`).
+-   [x] **8. Add Docstrings**: Write detailed docstrings for new methods in `core.py`.
+-   [x] **9. Final Testing**: Overall application testing.
+-   [ ] **10. Commit & Pull Request**: Commit all changes and prepare for PR. (Next Step)
 
 ---
 *Previous task "Streamlit Demo: Additional NLP Visualization Features" is considered complete based on prior interactions.*
