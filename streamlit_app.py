@@ -133,6 +133,18 @@ if selected_language == language_options[1] and not JANOME_AVAILABLE:
 
 # Analysis Type Selection
 st.header("Analysis Type")
+
+def clear_state_on_analysis_type_change():
+    """Callback to clear specific session state variables when analysis type changes."""
+    # Clear Japanese analysis specific states
+    st.session_state.show_jp_plot_options = False
+    st.session_state.jp_features_df = None
+    st.session_state.analysis_type_at_run = "" # Clear the persisted run type
+    # Clear other analysis-specific data if they were also persisted in session_state for similar reasons
+    # For example, if N-gram results were stored in session_state, clear them here too.
+    # st.session_state.ngram_df = None
+    # st.session_state.wordcloud_image = None
+
 analysis_options = [
     "Sentiment Analysis",
     "Text Categorization",
@@ -142,10 +154,12 @@ analysis_options = [
     "Japanese Text Analysis (Traditional)",
     # Add other traditional NLP functions here later e.g. "Co-occurrence Network"
 ]
-analysis_type = st.selectbox("Select Analysis", analysis_options)
-
-# --- Analysis Specific Options ---
-# These will store UI selections for various parameters
+analysis_type = st.selectbox(
+    "Select Analysis",
+    analysis_options,
+    key="analysis_type_selectbox", # Added a key for stability
+    on_change=clear_state_on_analysis_type_change # Callback function
+)
 
 # Japanese Text Analysis Options
 # jp_feature_to_plot = None # This will be handled by the selectbox directly or session_state if needed for persistence across runs unrelated to its own change
@@ -437,8 +451,9 @@ if st.button(f"Run {analysis_type}"):
 
 # This block will now handle the display of plot options and the plot itself,
 # based on session_state, outside the main "Run Analysis" button's conditional block.
+# Crucially, it also checks if the *current* analysis_type is still Japanese Text Analysis.
 if st.session_state.get('show_jp_plot_options', False) and \
-   st.session_state.get('analysis_type_at_run') == "Japanese Text Analysis (Traditional)" and \
+   analysis_type == "Japanese Text Analysis (Traditional)" and \
    st.session_state.jp_features_df is not None and \
    not st.session_state.jp_features_df.empty:
 
