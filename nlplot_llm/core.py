@@ -334,15 +334,23 @@ class NLPlotLLM():
             return
 
         img_array = wordcloud_instance.to_array()
-        def show_array(img_array_to_show, save_flag, output_path, filename_prefix_wc):
-            stream = BytesIO(); pil_img = Image.fromarray(img_array_to_show)
-            if save_flag:
-                date_str = pd.to_datetime(datetime.datetime.now()).strftime('%Y-%m-%d'); filename = f"{date_str}_{filename_prefix_wc}_wordcloud.png"; full_save_path = os.path.join(output_path, filename)
-                try: os.makedirs(output_path, exist_ok=True); pil_img.save(full_save_path); print(f"Wordcloud image saved to {full_save_path}")
-                except PermissionError: print(f"Error: Permission denied to save wordcloud image to '{full_save_path}'. Please check directory permissions.")
-                except Exception as e_save: print(f"Error saving wordcloud image to '{full_save_path}': {e_save}")
-            pil_img.save(stream, 'png'); IPython.display.display(IPython.display.Image(data=stream.getvalue()))
-        show_array(img_array, save, self.output_file_path, "wordcloud_plot"); return None
+        pil_img = Image.fromarray(img_array)
+
+        if save:
+            date_str = pd.to_datetime(datetime.datetime.now()).strftime('%Y-%m-%d')
+            filename = f"{date_str}_wordcloud_plot_wordcloud.png" # Corrected prefix part
+            full_save_path = os.path.join(self.output_file_path, filename)
+            try:
+                os.makedirs(self.output_file_path, exist_ok=True)
+                pil_img.save(full_save_path)
+                print(f"Wordcloud image saved to {full_save_path}")
+            except PermissionError:
+                print(f"Error: Permission denied to save wordcloud image to '{full_save_path}'. Please check directory permissions.")
+            except Exception as e_save:
+                print(f"Error saving wordcloud image to '{full_save_path}': {e_save}")
+
+        # Return the PIL Image object instead of displaying it with IPython
+        return pil_img
 
     def get_edges_nodes(self, batches: list, min_edge_frequency: int) -> None:
         if not isinstance(min_edge_frequency, int) or min_edge_frequency < 0: raise ValueError("min_edge_frequency must be a non-negative integer.")

@@ -46,3 +46,42 @@
 
 **進捗:**
 新機能開発（キャッシュ機構、非同期処理API）に関する全ての計画ステップが完了。残りはコミットとプルリクエストのみ。
+
+## Streamlit Demo: Additional Features Implementation
+
+-   [x] **1. 準備作業と status.md の更新**
+    -   [x] `status.md` に新しいタスク「Streamlitデモへの追加機能実装」のセクションを作成し、本計画を記載しました。
+-   [x] **2. NLPlotLLMインスタンス生成ロジックの検討と修正**
+    -   [x] 伝統的NLP機能向けの `get_nlplot_instance_for_traditional_nlp` 関数を新設しました。
+    -   [x] `streamlit_app.py` の入力テキストを処理し、伝統的NLP機能が利用できる形で `NLPlotLLM` インスタンスを生成するようにしました。
+-   [x] **3. Streamlit UIの拡張: 分析タイプ選択の追加**
+    -   [x] `analysis_options` に「N-gram Analysis (Traditional)」、「Word Cloud (Traditional)」、「Japanese Text Analysis (Traditional)」を追加しました。
+    -   [x] 各分析タイプが選択された場合の専用UI（パラメータ設定用）を設けました。
+-   [x] **4. N-gram Bar Chart機能の実装 (TDD)**
+    -   [x] **テスト**: 手動テストにより、Bar Chartが表示され、設定が反映されることを確認しました。
+    -   [x] **実装**:
+        -   [x] 「N-gram Analysis」選択時に入力とUI設定に基づき `npt.bar_ngram()` を呼び出すようにしました。
+        -   [x] `st.plotly_chart` を使用して結果のプロットを表示するようにしました。
+        -   [x] 必要なパラメータ（ngram, top_n, stopwords）の入力UIを設けました。
+    -   [x] **リファクタリング**: 関連コードを整理しました。
+-   [x] **5. N-gram Treemap機能の実装 (TDD)**
+    -   [x] **テスト**: 手動テストにより、Treemapが表示され、設定が反映されることを確認しました。
+    -   [x] **実装**:
+        -   [x] `npt.treemap()` を呼び出し、結果を表示するようにしました。
+        -   [x] 必要なパラメータの入力UIを設けました。
+    -   [x] **リファクタリング**: 関連コードを整理しました。
+-   [x] **6. Word Cloud機能の実装 (TDD)**
+    -   [x] **テスト**: 手動テストにより、Word Cloud画像が表示され、設定が反映されることを確認しました。
+    -   [x] **実装**:
+        -   [x] `nlplot_llm/core.py` の `wordcloud` メソッドを修正し、PIL Imageオブジェクトを返すようにしました。
+        -   [x] `streamlit_app.py` で `npt.wordcloud()` を呼び出し、結果を `st.image` で表示するようにしました。
+        -   [x] 必要なパラメータ（max_words, stopwords）の入力UIを設けました。
+    -   [x] **リファクタリング**: 関連コードを整理しました。
+-   [x] **7. 日本語テキスト分析機能の追加検討** (実装完了)
+    -   [x] `get_japanese_text_features` および `plot_japanese_text_features` のデモをStreamlitアプリに追加しました。
+    -   [x] Janomeの利用可否を確認し、UI表示を制御するようにしました。
+    -   [x] 特徴量DataFrameの表示と、数値特徴量のヒストグラムプロット機能を追加しました。
+-   [x] **8. status.md の最終更新** (この更新)
+    -   [x] 全ての作業が完了し、`status.md` を最新の状態に更新しました。
+-   [ ] **9. 変更のコミットとプルリクエスト**
+    -   [ ] 全ての変更をコミットし、プルリクエストを作成します。

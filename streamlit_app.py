@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os # Added for os.getenv
 from nlplot_llm import NLPlotLLM # Updated import
+from nlplot_llm.core import JANOME_AVAILABLE # Import JANOME_AVAILABLE flag
 
 # --- App Configuration ---
 st.set_page_config(page_title="NLPlotLLM Demo", layout="wide") # Updated title
@@ -12,11 +13,33 @@ def get_nlplot_llm_instance(): # Updated function name
     # For the demo, we might not need a DataFrame for NLPlotLLM initialization
     # if we are only using LLM methods that take Series directly.
     # However, NLPlotLLM requires a df and target_col for its constructor.
-    # We can use a dummy one.
-    dummy_df = pd.DataFrame({'text': ["dummy text for nlplot_llm init"]})
+    # We can use a dummy one for LLM tasks that take Series directly.
+    dummy_df = pd.DataFrame({'text_llm': ["dummy text for nlplot_llm init"]}) # Changed column name for clarity
     # Get cache setting from sidebar
     use_llm_cache = st.session_state.get("use_llm_cache", True) # Default to True if not set
-    return NLPlotLLM(dummy_df, target_col='text', use_cache=use_llm_cache)
+    # Note: Font path is not critical for LLM-only tasks but set for completeness.
+    return NLPlotLLM(dummy_df, target_col='text_llm', use_cache=use_llm_cache, font_path=None)
+
+def get_nlplot_instance_for_traditional_nlp(input_text_lines: list[str], target_column_name: str = "processed_text"):
+    """
+    Creates an NLPlotLLM instance suitable for traditional NLP tasks.
+    The input text lines are tokenized (by simple space splitting) and put into a DataFrame.
+    """
+    if not input_text_lines:
+        st.warning("No input text provided for traditional NLP analysis. Using empty DataFrame.")
+        # NLPlotLLM expects a DataFrame with a specific column, even if empty.
+        df = pd.DataFrame({target_column_name: pd.Series([], dtype='object')})
+    else:
+        # Simple tokenization (splitting by space) for traditional NLP functions
+        # NLPlotLLM's traditional methods expect a list of tokens.
+        tokenized_lines = [line.split() for line in input_text_lines]
+        df = pd.DataFrame({target_column_name: tokenized_lines})
+
+    # For traditional NLP, caching at the NLPlotLLM level is not currently implemented for its plotting methods.
+    # Font path might be relevant for word cloud.
+    # TODO: Consider making font_path configurable via Streamlit UI if WordCloud is added.
+    font_path_ui = None # Placeholder for potential future UI input for font
+    return NLPlotLLM(df, target_col=target_column_name, font_path=font_path_ui, use_cache=False)
 
 # --- Sidebar for LLM Configuration ---
 st.sidebar.header("LLM Configuration (LiteLLM)")
@@ -77,10 +100,38 @@ input_text = st.text_area("Enter text to analyze (one document per line for mult
 
 # Analysis Type Selection
 st.header("Analysis Type")
-analysis_options = ["Sentiment Analysis", "Text Categorization", "Text Summarization"]
+analysis_options = [
+    "Sentiment Analysis",
+    "Text Categorization",
+    "Text Summarization",
+    "N-gram Analysis (Traditional)",
+    "Word Cloud (Traditional)",
+    "Japanese Text Analysis (Traditional)",
+    # Add other traditional NLP functions here later e.g. "Co-occurrence Network"
+]
 analysis_type = st.selectbox("Select Analysis", analysis_options)
 
 # --- Analysis Specific Options ---
+# These will store UI selections for various parameters
+
+# Japanese Text Analysis Options
+jp_feature_to_plot = None # Stores the feature selected by the user for plotting
+# Session state to store generated features dataframe to avoid recomputing
+if 'jp_features_df' not in st.session_state:
+    st.session_state.jp_features_df = None
+
+# --- Analysis Specific Options ---
+# These will store UI selections for various parameters
+
+# N-gram Analysis Options
+ngram_type_selected = 1
+ngram_top_n_selected = 20
+ngram_stopwords_str = "" # Comma-separated string for stopwords
+
+# Word Cloud Options
+wc_max_words = 100
+wc_stopwords_str = "" # Comma-separated string for stopwords for wordcloud
+# wc_font_path_str = "" # Optional: UI for font path
 
 # Sentiment Analysis Options
 prompt_sentiment = ""
@@ -141,92 +192,243 @@ elif analysis_type == "Text Summarization":
             height=120,
             help="Prompt for summarizing the text directly (when chunking is disabled). Use placeholder: {text}. If empty, library default is used."
         )
+elif analysis_type == "N-gram Analysis (Traditional)":
+    st.subheader("N-gram Analysis Options")
+    ngram_type_selected = st.number_input("N-gram (e.g., 1 for unigram, 2 for bigram)", min_value=1, max_value=5, value=ngram_type_selected, step=1)
+    ngram_top_n_selected = st.number_input("Top N results to display", min_value=5, max_value=100, value=ngram_top_n_selected, step=5)
+    ngram_stopwords_str = st.text_input("N-gram Stopwords (comma-separated)", value=ngram_stopwords_str if ngram_stopwords_str else "is,a,the,an,and,or,but")
+elif analysis_type == "Word Cloud (Traditional)":
+    st.subheader("Word Cloud Options")
+    wc_max_words = st.number_input("Max Words in Cloud", min_value=10, max_value=500, value=wc_max_words, step=10)
+    wc_stopwords_str = st.text_input("Word Cloud Stopwords (comma-separated)", value=wc_stopwords_str if wc_stopwords_str else "is,a,the,an,and,or,but")
+    # Potentially add font path input:
+    # wc_font_path_str = st.text_input("Font Path for Word Cloud (optional, .ttf file)", value=wc_font_path_str)
+elif analysis_type == "Japanese Text Analysis (Traditional)":
+    st.subheader("Japanese Text Analysis Options")
+    if not JANOME_AVAILABLE:
+        st.warning("Janome (Japanese morphological analyzer) is not installed. This feature is unavailable. Please install it: `pip install janome`")
+    else:
+        st.info("This feature calculates various linguistic features for Japanese text. Ensure your input text is in Japanese.")
+        # Options for this analysis will be primarily for plotting after feature generation.
+        # Feature selection for plotting will appear after features are generated.
+        pass
 
 
 # Execute Button
 if st.button(f"Run {analysis_type}"):
     if not input_text.strip():
         st.error("Please enter some text to analyze.")
-    elif not model_string.strip():
-        st.error("Please enter a LiteLLM Model String.")
-    # Removed specific OpenAI key check here as LiteLLM handles various auth methods.
-    # The warning in the sidebar should guide the user.
+    # LLM model string is only required for LLM-based analyses
+    elif analysis_type in ["Sentiment Analysis", "Text Categorization", "Text Summarization"] and not model_string.strip():
+        st.error("Please enter a LiteLLM Model String for LLM-based analysis.")
     else:
         lines = [line.strip() for line in input_text.split('\n') if line.strip()]
         if not lines:
             st.error("No valid text lines found after stripping.")
         else:
-            text_series = pd.Series(lines)
-            npt = get_nlplot_llm_instance()
+            # LLM specific processing
+            if analysis_type in ["Sentiment Analysis", "Text Categorization", "Text Summarization"]:
+                text_series = pd.Series(lines)
+                npt_llm = get_nlplot_llm_instance() # Instance for LLM tasks
+                st.info(f"Processing {len(text_series)} text document(s) with LLM: {model_string}...")
+                try:
+                    with st.spinner("Analyzing with LLM..."):
+                        if analysis_type == "Sentiment Analysis":
+                            st.subheader("Sentiment Analysis Results")
+                            analyze_kwargs = litellm_kwargs.copy()
+                            if prompt_sentiment.strip():
+                                analyze_kwargs["prompt_template_str"] = prompt_sentiment
+                            result_df = npt_llm.analyze_sentiment_llm(
+                                text_series=text_series,
+                                model=model_string,
+                                **analyze_kwargs
+                            )
+                            st.dataframe(result_df)
 
-            st.info(f"Processing {len(text_series)} text document(s) using model: {model_string}...")
-
-            try:
-                with st.spinner("Analyzing..."):
-                    if analysis_type == "Sentiment Analysis":
-                        st.subheader("Sentiment Analysis Results")
-                        analyze_kwargs = litellm_kwargs.copy()
-                        if prompt_sentiment.strip():
-                            analyze_kwargs["prompt_template_str"] = prompt_sentiment
-                        result_df = npt.analyze_sentiment_llm(
-                            text_series=text_series,
-                            model=model_string, # Use the LiteLLM model string
-                            **analyze_kwargs # Pass all collected LiteLLM kwargs
-                        )
-                        st.dataframe(result_df)
-
-                    elif analysis_type == "Text Categorization":
-                        st.subheader("Text Categorization Results")
-                        if not categories_input_str.strip():
-                            st.error("Please enter categories for text categorization.")
-                        else:
-                            categories_list = [cat.strip() for cat in categories_input_str.split(',') if cat.strip()]
-                            if not categories_list:
-                                st.error("No valid categories provided.")
+                        elif analysis_type == "Text Categorization":
+                            st.subheader("Text Categorization Results")
+                            if not categories_input_str.strip():
+                                st.error("Please enter categories for text categorization.")
                             else:
-                                categorize_kwargs = litellm_kwargs.copy()
-                                if prompt_categorize.strip():
-                                    categorize_kwargs["prompt_template_str"] = prompt_categorize
-                                result_df = npt.categorize_text_llm(
-                                    text_series=text_series,
-                                    categories=categories_list,
-                                    model=model_string, # Use the LiteLLM model string
-                                    multi_label=multi_label_categories,
-                                    **categorize_kwargs # Pass all collected LiteLLM kwargs
-                                )
-                                st.dataframe(result_df)
+                                categories_list = [cat.strip() for cat in categories_input_str.split(',') if cat.strip()]
+                                if not categories_list:
+                                    st.error("No valid categories provided.")
+                                else:
+                                    categorize_kwargs = litellm_kwargs.copy()
+                                    if prompt_categorize.strip():
+                                        categorize_kwargs["prompt_template_str"] = prompt_categorize
+                                    result_df = npt_llm.categorize_text_llm(
+                                        text_series=text_series,
+                                        categories=categories_list,
+                                        model=model_string,
+                                        multi_label=multi_label_categories,
+                                        **categorize_kwargs
+                                    )
+                                    st.dataframe(result_df)
 
-                    elif analysis_type == "Text Summarization":
-                        st.subheader("Text Summarization Results")
+                        elif analysis_type == "Text Summarization":
+                            st.subheader("Text Summarization Results")
+                            summarize_final_kwargs = litellm_kwargs.copy()
+                            summarize_final_kwargs["use_chunking"] = use_chunking_summarize
+                            if use_chunking_summarize:
+                                summarize_final_kwargs["chunk_size"] = chunk_size_summarize
+                                summarize_final_kwargs["chunk_overlap"] = chunk_overlap_summarize
+                                if chunk_prompt_template_summarize.strip():
+                                    summarize_final_kwargs["chunk_prompt_template_str"] = chunk_prompt_template_summarize
+                                if combine_prompt_template_summarize.strip():
+                                    summarize_final_kwargs["combine_prompt_template_str"] = combine_prompt_template_summarize
+                            else:
+                                if chunk_prompt_template_summarize.strip():
+                                    summarize_final_kwargs["prompt_template_str"] = chunk_prompt_template_summarize
+                            result_df = npt_llm.summarize_text_llm(
+                                text_series=text_series,
+                                model=model_string,
+                                **summarize_final_kwargs
+                            )
+                            st.dataframe(result_df)
+                except ImportError as ie:
+                    st.error(f"ImportError: {ie}. Make sure Langchain and necessary LLM provider libraries are installed.")
+                except ValueError as ve:
+                    st.error(f"ValueError: {ve}")
+                except Exception as e:
+                    st.error(f"An unexpected error occurred during LLM analysis: {e}")
 
-                        # Start with base litellm_kwargs
-                        summarize_final_kwargs = litellm_kwargs.copy()
-                        summarize_final_kwargs["use_chunking"] = use_chunking_summarize
+            # Traditional NLP processing
+            elif analysis_type == "N-gram Analysis (Traditional)":
+                st.info(f"Processing {len(lines)} text document(s) for N-gram Analysis...")
+                # For N-gram, we need an NLPlotLLM instance with the actual text data
+                # The get_nlplot_instance_for_traditional_nlp helper function prepares this.
+                # The target column name used in the helper is "processed_text" by default.
+                npt_traditional = get_nlplot_instance_for_traditional_nlp(lines, target_column_name="input_tokens")
 
-                        if use_chunking_summarize:
-                            summarize_final_kwargs["chunk_size"] = chunk_size_summarize
-                            summarize_final_kwargs["chunk_overlap"] = chunk_overlap_summarize
-                            if chunk_prompt_template_summarize.strip():
-                                summarize_final_kwargs["chunk_prompt_template_str"] = chunk_prompt_template_summarize
-                            if combine_prompt_template_summarize.strip():
-                                summarize_final_kwargs["combine_prompt_template_str"] = combine_prompt_template_summarize
-                        else:
-                            if chunk_prompt_template_summarize.strip(): # This UI field is reused for direct prompt
-                                summarize_final_kwargs["prompt_template_str"] = chunk_prompt_template_summarize
+                # Prepare stopwords list
+                stopwords_list = [sw.strip() for sw in ngram_stopwords_str.split(',') if sw.strip()]
 
-                        result_df = npt.summarize_text_llm(
-                            text_series=text_series,
-                            model=model_string, # Use the LiteLLM model string
-                            **summarize_final_kwargs
+                try:
+                    with st.spinner("Generating N-gram Bar Chart..."):
+                        st.subheader(f"{ngram_type_selected}-gram Bar Chart (Top {ngram_top_n_selected})")
+                        fig_bar = npt_traditional.bar_ngram(
+                            title=f"{ngram_type_selected}-gram Frequency",
+                            ngram=ngram_type_selected,
+                            top_n=ngram_top_n_selected,
+                            stopwords=stopwords_list,
+                            verbose=False # Reduce console output in Streamlit app
                         )
-                        st.dataframe(result_df)
+                        if fig_bar and fig_bar.data:
+                            st.plotly_chart(fig_bar, use_container_width=True)
+                        else:
+                            st.warning("No data to display for N-gram Bar Chart. Adjust parameters or input text.")
 
-            except ImportError as ie:
-                st.error(f"ImportError: {ie}. Make sure Langchain and necessary LLM provider libraries are installed.")
-            except ValueError as ve:
-                st.error(f"ValueError: {ve}")
-            except Exception as e:
-                st.error(f"An unexpected error occurred: {e}")
+                    with st.spinner("Generating N-gram Treemap..."):
+                        st.subheader(f"{ngram_type_selected}-gram Treemap (Top {ngram_top_n_selected})")
+                        fig_treemap = npt_traditional.treemap(
+                            title=f"{ngram_type_selected}-gram Treemap",
+                            ngram=ngram_type_selected,
+                            top_n=ngram_top_n_selected,
+                            stopwords=stopwords_list,
+                            verbose=False # Reduce console output
+                        )
+                        if fig_treemap and fig_treemap.data:
+                            st.plotly_chart(fig_treemap, use_container_width=True)
+                        else:
+                            st.warning("No data to display for N-gram Treemap. Adjust parameters or input text.")
+
+                except Exception as e:
+                    st.error(f"An error occurred during N-gram Analysis: {e}")
+
+            elif analysis_type == "Word Cloud (Traditional)":
+                st.info(f"Processing {len(lines)} text document(s) for Word Cloud...")
+                npt_traditional = get_nlplot_instance_for_traditional_nlp(lines, target_column_name="input_tokens_wc")
+
+                # Prepare stopwords list for word cloud
+                wc_stopwords_list = [sw.strip() for sw in wc_stopwords_str.split(',') if sw.strip()]
+
+                # Font path (optional) - for now, we'll let NLPlotLLM use its default
+                # font_path_to_use = wc_font_path_str if wc_font_path_str.strip() else None
+
+                try:
+                    with st.spinner("Generating Word Cloud..."):
+                        st.subheader(f"Word Cloud (Max Words: {wc_max_words})")
+                        # The wordcloud method now returns a PIL Image object
+                        pil_image = npt_traditional.wordcloud(
+                            max_words=wc_max_words,
+                            stopwords=wc_stopwords_list,
+                            # font_path=font_path_to_use, # Pass if UI for font_path is enabled
+                            verbose=False # Reduce console output
+                        )
+                        if pil_image:
+                            st.image(pil_image, use_column_width=True)
+                        else:
+                            st.warning("Could not generate Word Cloud. Input text might be empty or all words filtered out.")
+
+                except Exception as e:
+                    st.error(f"An error occurred during Word Cloud generation: {e}")
+
+            elif analysis_type == "Japanese Text Analysis (Traditional)":
+                if not JANOME_AVAILABLE:
+                    st.error("Janome is not installed, cannot perform Japanese Text Analysis.")
+                else:
+                    st.info(f"Processing {len(lines)} text document(s) for Japanese Text Analysis...")
+                    # For Japanese text features, we pass the raw text lines as a Series.
+                    # NLPlotLLM instance can be the basic one used for LLM tasks, as get_japanese_text_features
+                    # doesn't rely on the instance's df or target_col in the same way traditional plots do.
+                    # However, it might be cleaner to have a dedicated instance or ensure the dummy one is fine.
+                    # For now, using the LLM instance.
+                    npt_jp_analyzer = get_nlplot_llm_instance() # Or a specific one if needed
+
+                    text_series_jp = pd.Series(lines)
+
+                    try:
+                        with st.spinner("Calculating Japanese text features..."):
+                            st.session_state.jp_features_df = npt_jp_analyzer.get_japanese_text_features(text_series_jp)
+                            st.subheader("Japanese Text Features")
+                            if st.session_state.jp_features_df is not None and not st.session_state.jp_features_df.empty:
+                                st.dataframe(st.session_state.jp_features_df)
+                            else:
+                                st.warning("No features were calculated. Input text might be unsuitable or empty.")
+
+                        # Allow plotting if features are available
+                        if st.session_state.jp_features_df is not None and not st.session_state.jp_features_df.empty:
+                            st.subheader("Plot Japanese Text Feature Distribution")
+                            # Filter for numeric columns suitable for histogram
+                            numeric_cols = st.session_state.jp_features_df.select_dtypes(include=pd.np.number).columns.tolist()
+                            if 'total_tokens' in numeric_cols: # Default to 'total_tokens' if available
+                                default_idx = numeric_cols.index('total_tokens')
+                            elif numeric_cols:
+                                default_idx = 0
+                            else:
+                                default_idx = 0 # Should not happen if df is not empty and has numeric features
+
+                            if numeric_cols:
+                                jp_feature_to_plot = st.selectbox(
+                                    "Select feature to plot:",
+                                    options=numeric_cols,
+                                    index=default_idx
+                                )
+                                if jp_feature_to_plot:
+                                    with st.spinner(f"Generating plot for {jp_feature_to_plot}..."):
+                                        # Assuming plot_japanese_text_features is a method of npt_jp_analyzer
+                                        # or a static/module function that takes the df and feature name.
+                                        # For now, let's assume it's a method of the instance.
+                                        # If it's not, this call needs to be adjusted.
+                                        # Based on core.py, it is a method.
+                                        fig_jp_plot = npt_jp_analyzer.plot_japanese_text_features(
+                                            st.session_state.jp_features_df,
+                                            target_feature=jp_feature_to_plot,
+                                            title=f"Distribution of {jp_feature_to_plot}"
+                                        )
+                                        if fig_jp_plot:
+                                            st.plotly_chart(fig_jp_plot, use_container_width=True)
+                                        else:
+                                            st.warning(f"Could not generate plot for {jp_feature_to_plot}.")
+                            else:
+                                st.info("No numeric features available in the generated data to plot.")
+
+                    except Exception as e:
+                        st.error(f"An error occurred during Japanese Text Analysis: {e}")
+                        st.session_state.jp_features_df = None # Clear on error
+
+
 else:
     st.caption(f"Click the 'Run {analysis_type}' button to start.") # Dynamic button text in caption
 
