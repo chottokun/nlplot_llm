@@ -371,6 +371,292 @@ class NLPlotLLM():
         # Return the PIL Image object instead of displaying it with IPython
         return pil_img
 
+    def get_tfidf_top_features(
+        self,
+        text_series: pd.Series,
+        language: str = "english",
+        n_features: int = 10,
+        custom_stopwords: Optional[List[str]] = None,
+        use_janome_tokenizer_for_japanese: bool = True,
+        tfidf_ngram_range: tuple = (1, 1),
+        tfidf_max_df: float = 1.0,
+        tfidf_min_df: int = 1,
+        return_type: str = "overall"  # "overall" または "per_document"
+    ) -> pd.DataFrame:
+        """
+        Calculates TF-IDF scores for the given text series and returns top features.
+        (Further details will be added as implementation progresses)
+        """
+        # Initial minimal implementation to pass basic tests
+        # This will be expanded in subsequent steps.
+        print(f"get_tfidf_top_features called with: language='{language}', n_features={n_features}, return_type='{return_type}'") # Placeholder for debugging
+        if not isinstance(text_series, pd.Series):
+            # Or raise TypeError("text_series must be a pandas Series")
+            print("Warning: text_series is not a pandas Series. Returning empty DataFrame.")
+            return pd.DataFrame()
+
+        if text_series.empty:
+            print("Warning: text_series is empty. Returning empty DataFrame.")
+            return pd.DataFrame()
+
+        # --- 1-2. Tokenizer Logic ---
+        processed_corpus: List[str] = [] # For TfidfVectorizer, expects list of strings (documents)
+
+        janome_tokenizer_for_tfidf = None
+        if language == "japanese" and use_janome_tokenizer_for_japanese and JANOME_AVAILABLE:
+            try:
+                # Initialize a new Janome tokenizer specifically for TF-IDF (wakati mode)
+                # This avoids conflict if self._janome_tokenizer was initialized differently.
+                janome_tokenizer_for_tfidf = JanomeTokenizer(wakati=True)
+                print("Janome tokenizer (wakati=True) initialized for TF-IDF.")
+            except Exception as e:
+                print(f"Warning: Failed to initialize Janome Tokenizer for TF-IDF (wakati=True): {e}. Will fallback.")
+
+        for i, text_content in enumerate(text_series):
+            if not isinstance(text_content, str) or not text_content.strip():
+                processed_corpus.append("") # Append empty string for empty/NaN inputs
+                continue
+
+            if janome_tokenizer_for_tfidf:
+                try:
+                    tokens = list(janome_tokenizer_for_tfidf.tokenize(text_content))
+                    processed_corpus.append(" ".join(tokens))
+                except Exception as e_tok:
+                    print(f"Error during Janome tokenization for document {i}: {e_tok}. Using raw text.")
+                    processed_corpus.append(text_content) # Fallback to raw text on error
+            else:
+                # For English or if Janome is not used/available for Japanese,
+                # TfidfVectorizer will handle tokenization by splitting on spaces and punctuation.
+                # No explicit tokenization needed here, just pass the raw string.
+                processed_corpus.append(text_content)
+
+        # --- 1-3. Stopword Processing ---
+        final_stopwords: Optional[List[str]] = None # Default to None if no stopwords are gathered
+        temp_stopwords_list: List[str] = []
+
+        if language == "english":
+            try:
+                # sklearn.feature_extraction.text.ENGLISH_STOP_WORDS is a frozenset
+                from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+                temp_stopwords_list.extend(list(ENGLISH_STOP_WORDS))
+            except ImportError:
+                print("Warning: scikit-learn is not installed. Default English stopwords for TF-IDF cannot be used. "
+                      "Consider providing custom stopwords or installing scikit-learn.")
+
+        # Add instance default stopwords (loaded from file during __init__)
+        if hasattr(self, 'default_stopwords') and self.default_stopwords:
+            temp_stopwords_list.extend(self.default_stopwords)
+
+        # Add custom stopwords passed as argument
+        if custom_stopwords:
+            if isinstance(custom_stopwords, list):
+                temp_stopwords_list.extend(custom_stopwords)
+            else:
+                print("Warning: custom_stopwords should be a list of strings. It will be ignored.")
+
+        if temp_stopwords_list:
+            final_stopwords = sorted(list(set(temp_stopwords_list)))
+            # print(f"TF-IDF using {len(final_stopwords)} unique stopwords.") # For debugging
+
+        # --- 1-4. Initialize and apply TfidfVectorizer ---
+        try:
+            from sklearn.feature_extraction.text import TfidfVectorizer
+        except ImportError:
+            print("Error: scikit-learn is not installed. TF-IDF functionality requires scikit-learn. "
+                  "Please install it, e.g., `pip install scikit-learn`.")
+            # Return empty DataFrame matching the expected structure based on return_type
+            if return_type == "overall":
+                return pd.DataFrame(columns=['word', 'tfidf_score'])
+            elif return_type == "per_document":
+                return pd.DataFrame(columns=['document_id', 'word', 'tfidf_score'])
+            else: # Should have been caught earlier, but as a fallback
+                return pd.DataFrame()
+
+        vectorizer = TfidfVectorizer(
+            stop_words=final_stopwords,
+            ngram_range=tfidf_ngram_range,
+            max_df=tfidf_max_df,
+            min_df=tfidf_min_df,
+            # tokenizer= (if pretokenized strings are not used, and custom tokenization is needed here)
+            # preprocessor= (if custom preprocessing is needed)
+        )
+
+        try:
+            if not processed_corpus: # Handle case where all inputs were empty/invalid
+                print("Warning: Corpus for TF-IDF is empty after processing. Returning empty DataFrame.")
+                if return_type == "overall": return pd.DataFrame(columns=['word', 'tfidf_score'])
+                else: return pd.DataFrame(columns=['document_id', 'word', 'tfidf_score'])
+
+            tfidf_matrix = vectorizer.fit_transform(processed_corpus)
+            feature_names = vectorizer.get_feature_names_out()
+            # print(f"TF-IDF matrix shape: {tfidf_matrix.shape}") # Debug
+            # print(f"Number of features: {len(feature_names)}") # Debug
+
+        except ValueError as ve: # Catch errors from TfidfVectorizer (e.g., empty vocabulary)
+            print(f"ValueError during TF-IDF vectorization: {ve}. This might happen if all words are stopwords or documents are too short/similar after processing.")
+            if return_type == "overall": return pd.DataFrame(columns=['word', 'tfidf_score'])
+            else: return pd.DataFrame(columns=['document_id', 'word', 'tfidf_score'])
+
+
+        # Placeholder for feature extraction and DataFrame formatting (Steps 1-5, 1-6)
+        # For now, just returning empty DataFrame based on return_type.
+
+        # --- 1-5. Extract top features ---
+        # --- 1-6. Format output DataFrame ---
+        results_data = []
+        if return_type == "overall":
+            if tfidf_matrix.shape[1] == 0: # No features learned
+                return pd.DataFrame(columns=['word', 'tfidf_score'])
+
+            sum_tfidf = tfidf_matrix.sum(axis=0)
+            # For sparse matrix, sum_tfidf might be a matrix of shape (1, num_features)
+            # Convert it to a 1D array.
+            if not isinstance(sum_tfidf, np.ndarray): # e.g. scipy.sparse matrix
+                 sum_tfidf_array = sum_tfidf.A1 # Converts to 1D numpy array
+            else: # Already a numpy array (e.g. from a dense matrix, though less likely with TfidfVectorizer)
+                 sum_tfidf_array = sum_tfidf.flatten()
+
+            feature_scores = []
+            for i in range(len(feature_names)):
+                feature_scores.append((feature_names[i], sum_tfidf_array[i]))
+
+            sorted_features = sorted(feature_scores, key=lambda x: x[1], reverse=True)
+            top_n = sorted_features[:n_features]
+            df_results = pd.DataFrame(top_n, columns=['word', 'tfidf_score'])
+            return df_results
+
+        elif return_type == "per_document":
+            if tfidf_matrix.shape[1] == 0: # No features learned
+                return pd.DataFrame(columns=['document_id', 'word', 'tfidf_score'])
+
+            for i in range(tfidf_matrix.shape[0]): # For each document
+                doc_vector = tfidf_matrix[i, :]
+                non_zero_indices = doc_vector.nonzero()[1] # Get column indices of non-zero elements
+
+                doc_feature_scores = []
+                for idx in non_zero_indices:
+                    doc_feature_scores.append((feature_names[idx], doc_vector[0, idx]))
+
+                sorted_doc_features = sorted(doc_feature_scores, key=lambda x: x[1], reverse=True)
+                top_n_doc = sorted_doc_features[:n_features]
+
+                doc_id = text_series.index[i] if text_series.index.is_unique and not isinstance(text_series.index, pd.RangeIndex) else i
+                for word, score in top_n_doc:
+                    results_data.append({'document_id': doc_id,
+                                         'word': word,
+                                         'tfidf_score': score})
+
+            df_results = pd.DataFrame(results_data, columns=['document_id', 'word', 'tfidf_score'])
+            return df_results
+
+        else: # Should have been caught by initial checks
+            print(f"Error: Invalid return_type '{return_type}' encountered during feature extraction.")
+            return pd.DataFrame() # Fallback
+
+    def get_kwic_results(
+        self,
+        text_series: pd.Series,
+        keyword: str,
+        language: str = "english",
+        window_size: int = 5, # Number of tokens/words on each side
+        use_janome_tokenizer_for_japanese: bool = True,
+        ignore_case: bool = True
+    ) -> List[Dict[str, Any]]:
+        """
+        Finds Keyword in Context (KWIC) results from the text series.
+        (Further details will be added as implementation progresses)
+        """
+        # Initial minimal implementation
+        print(f"get_kwic_results called with: keyword='{keyword}', language='{language}', window_size={window_size}") # Placeholder
+        if not isinstance(text_series, pd.Series) or not isinstance(keyword, str):
+            print("Warning: Invalid input types for KWIC. text_series must be a Series and keyword a string.")
+            return []
+        if text_series.empty or not keyword.strip():
+            print("Warning: text_series is empty or keyword is blank. Returning empty list for KWIC.")
+            return []
+
+        # Placeholder for actual KWIC logic (Steps 2-2 to 2-4)
+
+        # --- 2-2. Tokenizer Logic ---
+        all_tokenized_documents: List[List[str]] = []
+        janome_tokenizer_for_kwic = None
+
+        if language == "japanese" and use_janome_tokenizer_for_japanese and JANOME_AVAILABLE:
+            try:
+                # Assuming JanomeTokenizer is already imported at the top of the file if JANOME_AVAILABLE is True
+                janome_tokenizer_for_kwic = JanomeTokenizer(wakati=True)
+                # print("Janome tokenizer (wakati=True) initialized for KWIC.") # Debug
+            except Exception as e:
+                print(f"Warning: Failed to initialize Janome Tokenizer for KWIC (wakati=True): {e}. Will fallback to space splitting.")
+
+        for i, text_content in enumerate(text_series):
+            if not isinstance(text_content, str) or not text_content.strip():
+                all_tokenized_documents.append([])
+                continue
+
+            if janome_tokenizer_for_kwic:
+                try:
+                    tokens = list(janome_tokenizer_for_kwic.tokenize(text_content))
+                    all_tokenized_documents.append(tokens)
+                except Exception as e_tok:
+                    print(f"Error during Janome tokenization for KWIC, document {i}: {e_tok}. Using space splitting as fallback.")
+                    all_tokenized_documents.append(text_content.split())
+            else:
+                all_tokenized_documents.append(text_content.split())
+
+
+        # --- 2-3. Keyword search and context extraction ---
+        # (Step 2-4 will format this into the final List[Dict])
+        raw_kwic_tuples: List[tuple] = [] # Store (doc_id, left_tokens, keyword_token, right_tokens)
+
+        search_keyword_processed = keyword.lower() if ignore_case else keyword
+
+        for doc_idx, tokens in enumerate(all_tokenized_documents):
+            if not tokens:
+                continue
+
+            for i, token in enumerate(tokens):
+                current_token_processed = token.lower() if ignore_case else token
+
+                if current_token_processed == search_keyword_processed:
+                    # Keyword found, extract context
+                    left_start_idx = max(0, i - window_size)
+                    left_tokens = tokens[left_start_idx:i]
+
+                    # Keyword itself (original casing)
+                    keyword_match_original_case = tokens[i]
+
+                    right_end_idx = min(len(tokens), i + 1 + window_size)
+                    right_tokens = tokens[i+1:right_end_idx]
+
+                    # Use original document index if available and meaningful, else use sequential doc_idx
+                    original_doc_id = text_series.index[doc_idx] if text_series.index.is_unique and not isinstance(text_series.index, pd.RangeIndex) else doc_idx
+
+                    raw_kwic_tuples.append(
+                        (original_doc_id, left_tokens, keyword_match_original_case, right_tokens)
+                    )
+
+        # Actual formatting into List[Dict[str, Any]] will be in step 2-4.
+        # For now, returning empty list to satisfy basic tests for step 2-1, 2-2 and the existence of this block.
+        # To make this step testable for its own logic, we could return raw_kwic_tuples
+        # but the plan is to return the final List[Dict] from the method.
+        # So, we'll build towards that in the next step.
+
+        # For now, to indicate progress and allow testing of this part if called directly (though not via TDD cycle yet for this specific output)
+        # print(f"Raw KWIC tuples found: {len(raw_kwic_tuples)}") # Debug
+
+        # --- 2-4. Format output list of dictionaries ---
+        final_kwic_results: List[Dict[str, Any]] = []
+        for doc_id_val, left_tokens_val, keyword_match_val, right_tokens_val in raw_kwic_tuples:
+            final_kwic_results.append({
+                "document_id": doc_id_val,
+                "left_context": " ".join(left_tokens_val),
+                "keyword_match": keyword_match_val,
+                "right_context": " ".join(right_tokens_val)
+            })
+
+        return final_kwic_results
+
     def get_edges_nodes(self, batches: list, min_edge_frequency: int) -> None:
         if not isinstance(min_edge_frequency, int) or min_edge_frequency < 0: raise ValueError("min_edge_frequency must be a non-negative integer.")
         edge_dict = {}

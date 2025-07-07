@@ -101,7 +101,51 @@ Streamlitデモへの伝統的NLP機能追加、および関連する多数の�
     -   [ ] `nlplot_llm.core` にKWICリスト生成メソッドを追加。
     -   [ ] StreamlitデモにUIと表示ロジックを追加。
 
-## Streamlit Demo: Additional NLP Visualization Features
+## Streamlit Demo: TF-IDF & KWIC Implementation
+
+**Phase 1: Core Feature Implementation (`nlplot_llm.core.py`)**
+
+-   [ ] **1. TF-IDF Method (`get_tfidf_top_features`) Design & Implementation (TDD)**
+    -   [ ] 1-1. Define method signature.
+    -   [ ] 1-2. Implement tokenizer logic (English/Japanese with Janome, considering pre-tokenized input).
+    -   [ ] 1-3. Implement stopword processing.
+    -   [ ] 1-4. Initialize and apply `TfidfVectorizer`.
+    -   [ ] 1-5. Extract top features (overallcorpus / per document).
+    -   [ ] 1-6. Format output DataFrame.
+    -   [ ] 1-7. Write and pass unit tests (various inputs, parameters, languages).
+-   [ ] **2. KWIC Method (`get_kwic_results`) Design & Implementation (TDD)**
+    -   [ ] 2-1. Define method signature.
+    -   [ ] 2-2. Implement tokenizer logic (similar to TF-IDF).
+    -   [ ] 2-3. Implement keyword search and context extraction logic.
+    -   [ ] 2-4. Format output list of dictionaries.
+    -   [ ] 2-5. Write and pass unit tests (various inputs, keyword, options).
+
+**Phase 2: Streamlit Demo UI & Logic (`streamlit_app.py`)**
+
+-   [ ] **3. TF-IDF Demo Implementation**
+    -   [ ] 3-1. Add "TF-IDF Top Features" to analysis options.
+    -   [ ] 3-2. Design and implement UI for TF-IDF options (top_n, stopwords, ngram_range, etc.).
+    -   [ ] 3-3. Implement logic to call `get_tfidf_top_features` and display results (DataFrame, optional bar chart).
+    -   [ ] 3-4. Conduct manual testing for UI and functionality.
+-   [ ] **4. KWIC Demo Implementation**
+    -   [ ] 4-1. Add "KWIC (Keyword in Context)" to analysis options.
+    -   [ ] 4-2. Design and implement UI for KWIC options (keyword, window_size, ignore_case).
+    -   [ ] 4-3. Implement logic to call `get_kwic_results` and display results (formatted table/markdown).
+    -   [ ] 4-4. Conduct manual testing for UI and functionality.
+
+**Phase 3: Documentation & Finalization**
+
+-   [ ] **5. Update `status.md`**: Reflect progress of TF-IDF & KWIC implementation.
+-   [ ] **6. Update `README.md`**: Briefly mention new TF-IDF and KWIC features. Add `scikit-learn` to dependencies if not already covered.
+-   [ ] **7. Update Dependencies**: Add `scikit-learn` to `requirements.txt` and/or `setup.py`.
+-   [ ] **8. Add Docstrings**: Write detailed docstrings for new methods in `core.py`.
+-   [ ] **9. Final Testing**: Overall application testing.
+-   [ ] **10. Commit & Pull Request**: Commit all changes and prepare for PR.
+
+---
+*Previous task "Streamlit Demo: Additional NLP Visualization Features" is considered complete based on prior interactions.*
+
+## Streamlit Demo: Additional NLP Visualization Features (Completed)
 
 -   [x] **1. status.md の更新**
     -   [x] `status.md` に新しいタスク「Streamlitデモへの追加NLP可視化機能実装」のセクションを作成し、本計画を記載しました。
@@ -129,7 +173,14 @@ Streamlitデモへの伝統的NLP機能追加、および関連する多数の�
         -   [x] `build_graph()` の結果（`st.session_state.npt_graph_instance`）を利用して `npt.sunburst()` を呼び出すようにしました。
         -   [x] 結果のPlotly Figureを `st.plotly_chart` で表示するようにしました。
     -   [x] **テスト**: 共起ネットワークが構築された後にサンバーストチャートが正しく表示されることを確認しました。
--   [ ] **6. status.md の最終更新** (Current)
-    -   [ ] 全ての作業が完了したら、`status.md` を最新の状態に更新します。
--   [ ] **7. 変更のコミットとプルリクエスト**
-    -   [ ] 全ての変更をコミットし、プルリクエストを作成します (ブランチは `feat/streamlit-traditional-nlp-demo` を継続)。
+-   [x] **6. status.md の最終更新** (この更新)
+    -   [x] 全ての作業が完了し、`status.md` を最新の状態に更新しました。
+-   [x] **7. 変更のコミットとプルリクエスト** (このタスクの最終ステップ)
+    -   [x] 全ての変更をコミットし、プルリクエストの準備ができました。
+
+**進捗:**
+Streamlitデモへの追加NLP可視化機能（Word Count Distribution, Co-occurrence Network, Sunburst Chart）の実装が完了しました。
+これには、`core.py` の `co_network` メソッドの修正、およびStreamlitアプリのUI/UX調整、状態管理の改善が含まれます。
+`status.md` も最新の状態に更新済みです。
+本タスク「Streamlit Demo: Additional NLP Visualization Features」はこれで完了となります。
+次のタスクは「Streamlit Demo: TF-IDF & KWIC Implementation」です。
