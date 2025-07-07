@@ -207,6 +207,10 @@ if 'npt_graph_instance' not in st.session_state:
     st.session_state.npt_graph_instance = None
 if 'graph_built_success' not in st.session_state:
     st.session_state.graph_built_success = False
+if 'show_sunburst_chart' not in st.session_state: # Renamed for clarity
+    st.session_state.show_sunburst_chart = False
+if 'co_occurrence_network_fig_cache' not in st.session_state: # To cache the figure
+    st.session_state.co_occurrence_network_fig_cache = None
 
 
 # Sentiment Analysis Options
@@ -517,47 +521,62 @@ if st.button(f"Run {analysis_type}"):
                         st.success("Graph for co-occurrence analysis built successfully.")
 
                     if st.session_state.graph_built_success:
+                        # Generate and cache the co-occurrence network figure
                         with st.spinner("Generating Co-occurrence Network plot..."):
-                            st.subheader("Co-occurrence Network")
-                            # co_network method was modified to return a Figure
-                            fig_co_network = npt_co.co_network(
-                                title="Co-occurrence Network",
-                                # Add other parameters from UI if implemented (e.g., layout_func, node_size_col)
-                            )
-                            if fig_co_network and fig_co_network.data:
-                                st.plotly_chart(fig_co_network, use_container_width=True)
-                                # Add button for Sunburst chart
-                                if st.button("Show Sunburst Chart for this Co-occurrence Data", key="show_sunburst_btn"):
-                                    if st.session_state.npt_graph_instance:
-                                        with st.spinner("Generating Sunburst Chart..."):
-                                            st.subheader("Sunburst Chart (from Co-occurrence Data)")
-                                            # TODO: Add UI for Sunburst specific options if needed
-                                            fig_sunburst = st.session_state.npt_graph_instance.sunburst(
-                                                title="Co-occurrence Sunburst"
-                                            )
-                                            if fig_sunburst and fig_sunburst.data:
-                                                st.plotly_chart(fig_sunburst, use_container_width=True)
-                                            else:
-                                                st.warning("Could not generate Sunburst Chart. Graph data might be unsuitable.")
-                                    else:
-                                        st.error("Graph data not available for Sunburst chart. Please re-run Co-occurrence Analysis.")
-
-                            elif hasattr(npt_co, 'node_df') and npt_co.node_df.empty:
-                                st.warning("No nodes found for co-occurrence network. Try adjusting stopwords or minimum edge frequency.")
-                            else:
-                                st.warning("Could not generate Co-occurrence Network. Graph might be empty or too small.")
+                            fig_co_network = st.session_state.npt_graph_instance.co_network(title="Co-occurrence Network")
+                            st.session_state.co_occurrence_network_fig_cache = fig_co_network
+                        # The actual display of the network and sunburst button will happen outside this 'if button' block,
+                        # using the cached figure and session state flags.
+                        # We set analysis_type_at_run here to ensure the display block knows it's for co-occurrence.
+                        st.session_state.analysis_type_at_run = analysis_type
+                        # Reset sunburst toggle for new graph
+                        st.session_state.show_sunburst_chart = False
+                    else: # graph_built_success is False
+                        st.session_state.co_occurrence_network_fig_cache = None
+                        st.session_state.show_sunburst_chart = False
+                        if hasattr(npt_co, 'node_df') and npt_co.node_df.empty: # Check if this was the reason for no graph
+                             st.warning("No nodes found for co-occurrence network. Try adjusting stopwords or minimum edge frequency.")
+                        # else: Generic error already handled by the except block or build_graph itself might print warnings.
 
                 except Exception as e:
                     st.error(f"An error occurred during Co-occurrence Analysis: {e}")
                     st.session_state.npt_graph_instance = None
                     st.session_state.graph_built_success = False
+                    st.session_state.co_occurrence_network_fig_cache = None
+                    st.session_state.show_sunburst_chart = False
 
 
-# This block will now handle the display of plot options and the plot itself,
-# based on session_state, outside the main "Run Analysis" button's conditional block.
-# Crucially, it also checks if the *current* analysis_type is still Japanese Text Analysis.
-if st.session_state.get('show_jp_plot_options', False) and \
-   analysis_type == "Japanese Text Analysis (Traditional)" and \
+# --- Persistent Display Area for Analysis Results (outside button click) ---
+
+# Display Co-occurrence Network if it was generated and analysis type is still Co-occurrence
+if analysis_type == "Co-occurrence Analysis (Traditional)" and \
+   st.session_state.get('graph_built_success', False) and \
+   st.session_state.co_occurrence_network_fig_cache is not None:
+
+    st.subheader("Co-occurrence Network")
+    st.plotly_chart(st.session_state.co_occurrence_network_fig_cache, use_container_width=True)
+
+    # Toggle button for Sunburst Chart
+    if st.button("Show/Hide Sunburst Chart", key="toggle_sunburst_co"):
+        st.session_state.show_sunburst_chart = not st.session_state.get('show_sunburst_chart', False)
+
+# Display Sunburst Chart if toggled and graph data is available
+if analysis_type == "Co-occurrence Analysis (Traditional)" and \
+   st.session_state.get('graph_built_success', False) and \
+   st.session_state.get('show_sunburst_chart', False) and \
+   st.session_state.npt_graph_instance is not None:
+
+    with st.spinner("Generating Sunburst Chart..."):
+        st.subheader("Sunburst Chart (from Co-occurrence Data)")
+        fig_sunburst = st.session_state.npt_graph_instance.sunburst(title="Co-occurrence Sunburst")
+        if fig_sunburst and fig_sunburst.data:
+            st.plotly_chart(fig_sunburst, use_container_width=True)
+        else:
+            st.warning("Could not generate Sunburst Chart. Graph data might be unsuitable.")
+
+# Display Japanese Text Analysis plot options if features were generated and analysis type is still Japanese Text
+if analysis_type == "Japanese Text Analysis (Traditional)" and \
+   st.session_state.get('show_jp_plot_options', False) and \
    st.session_state.jp_features_df is not None and \
    not st.session_state.jp_features_df.empty:
 
