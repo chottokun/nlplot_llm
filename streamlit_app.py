@@ -115,13 +115,16 @@ analysis_type = st.selectbox("Select Analysis", analysis_options)
 # These will store UI selections for various parameters
 
 # Japanese Text Analysis Options
-jp_feature_to_plot = None # Stores the feature selected by the user for plotting
+# jp_feature_to_plot = None # This will be handled by the selectbox directly or session_state if needed for persistence across runs unrelated to its own change
 # Session state to store generated features dataframe to avoid recomputing
 if 'jp_features_df' not in st.session_state:
     st.session_state.jp_features_df = None
-
-# --- Analysis Specific Options ---
-# These will store UI selections for various parameters
+if 'analysis_type_at_run' not in st.session_state: # To store analysis type when button is clicked
+    st.session_state.analysis_type_at_run = ""
+if 'show_jp_plot_options' not in st.session_state: # Flag to control display of plot options
+    st.session_state.show_jp_plot_options = False
+if 'jp_feature_selectbox_key' not in st.session_state: # Key for selectbox, might not be strictly needed if value is read directly
+    st.session_state.jp_feature_selectbox_key = 0 # Or some other initial value if you want to control index by state
 
 # N-gram Analysis Options
 ngram_type_selected = 1
@@ -379,58 +382,76 @@ if st.button(f"Run {analysis_type}"):
 
                     try:
                         with st.spinner("Calculating Japanese text features..."):
+                            # Reset plot options flag before new calculation
+                            st.session_state.show_jp_plot_options = False
                             st.session_state.jp_features_df = npt_jp_analyzer.get_japanese_text_features(text_series_jp)
-                            st.subheader("Japanese Text Features")
-                            if st.session_state.jp_features_df is not None and not st.session_state.jp_features_df.empty:
-                                st.dataframe(st.session_state.jp_features_df)
-                            else:
-                                st.warning("No features were calculated. Input text might be unsuitable or empty.")
+                            st.session_state.analysis_type_at_run = analysis_type # Persist analysis type
 
-                        # Allow plotting if features are available
+                        # Display features and set flag to show plot options outside button block
                         if st.session_state.jp_features_df is not None and not st.session_state.jp_features_df.empty:
-                            st.subheader("Plot Japanese Text Feature Distribution")
-                            # Filter for numeric columns suitable for histogram
-                            # Use include='number' for broader compatibility with pandas versions
-                            numeric_cols = st.session_state.jp_features_df.select_dtypes(include='number').columns.tolist()
-                            if 'total_tokens' in numeric_cols: # Default to 'total_tokens' if available
-                                default_idx = numeric_cols.index('total_tokens')
-                            elif numeric_cols:
-                                default_idx = 0
-                            else:
-                                default_idx = 0 # Should not happen if df is not empty and has numeric features
-
-                            if numeric_cols:
-                                jp_feature_to_plot = st.selectbox(
-                                    "Select feature to plot:",
-                                    options=numeric_cols,
-                                    index=default_idx
-                                )
-                                if jp_feature_to_plot:
-                                    with st.spinner(f"Generating plot for {jp_feature_to_plot}..."):
-                                        # Assuming plot_japanese_text_features is a method of npt_jp_analyzer
-                                        # or a static/module function that takes the df and feature name.
-                                        # For now, let's assume it's a method of the instance.
-                                        # If it's not, this call needs to be adjusted.
-                                        # Based on core.py, it is a method.
-                                        fig_jp_plot = npt_jp_analyzer.plot_japanese_text_features(
-                                            st.session_state.jp_features_df,
-                                            target_feature=jp_feature_to_plot,
-                                            title=f"Distribution of {jp_feature_to_plot}"
-                                        )
-                                        if fig_jp_plot:
-                                            st.plotly_chart(fig_jp_plot, use_container_width=True)
-                                        else:
-                                            st.warning(f"Could not generate plot for {jp_feature_to_plot}.")
-                            else:
-                                st.info("No numeric features available in the generated data to plot.")
+                            st.subheader("Japanese Text Features")
+                            st.dataframe(st.session_state.jp_features_df)
+                            st.session_state.show_jp_plot_options = True # Enable plot options display area
+                        else:
+                            st.warning("No features were calculated. Input text might be unsuitable or empty.")
+                            st.session_state.show_jp_plot_options = False
 
                     except Exception as e:
-                        st.error(f"An error occurred during Japanese Text Analysis: {e}")
-                        st.session_state.jp_features_df = None # Clear on error
+                        st.error(f"An error occurred during Japanese Text Analysis feature calculation: {e}")
+                        st.session_state.jp_features_df = None
+                        st.session_state.show_jp_plot_options = False
 
 
-else:
-    st.caption(f"Click the 'Run {analysis_type}' button to start.") # Dynamic button text in caption
+# This block will now handle the display of plot options and the plot itself,
+# based on session_state, outside the main "Run Analysis" button's conditional block.
+if st.session_state.get('show_jp_plot_options', False) and \
+   st.session_state.get('analysis_type_at_run') == "Japanese Text Analysis (Traditional)" and \
+   st.session_state.jp_features_df is not None and \
+   not st.session_state.jp_features_df.empty:
+
+    st.subheader("Plot Japanese Text Feature Distribution")
+    numeric_cols = st.session_state.jp_features_df.select_dtypes(include='number').columns.tolist()
+
+    default_idx = 0
+    if numeric_cols:
+        if 'total_tokens' in numeric_cols:
+            default_idx = numeric_cols.index('total_tokens')
+    else: # Should not happen if df has data and numeric columns
+        st.info("No numeric features available to plot.")
+
+    if numeric_cols:
+        # Using a consistent key for the selectbox
+        selected_feature_for_plot = st.selectbox(
+            "Select feature to plot:",
+            options=numeric_cols,
+            index=default_idx,
+            key="jp_feature_selector_stable_key"
+        )
+
+        if selected_feature_for_plot:
+            # Re-instantiate the analyzer for plotting (or ensure it's available)
+            # For simplicity, re-instantiating here. Could be optimized if complex.
+            npt_jp_plotter = get_nlplot_llm_instance()
+            try:
+                with st.spinner(f"Generating plot for {selected_feature_for_plot}..."):
+                    fig_jp_plot = npt_jp_plotter.plot_japanese_text_features(
+                        st.session_state.jp_features_df, # Use the stored DataFrame
+                        target_feature=selected_feature_for_plot,
+                        title=f"Distribution of {selected_feature_for_plot}"
+                    )
+                    if fig_jp_plot:
+                        st.plotly_chart(fig_jp_plot, use_container_width=True)
+                    else:
+                        st.warning(f"Could not generate plot for {selected_feature_for_plot}.")
+            except Exception as e:
+                st.error(f"An error occurred during plot generation for '{selected_feature_for_plot}': {e}")
+
+if not st.session_state.get('run_button_clicked', False): # Show initial caption if button not clicked yet
+    st.caption(f"Click the 'Run {analysis_type}' button to start.")
+
+# At the end of the script, or after the button logic, reset the button click state if needed,
+# or manage it to allow re-runs. For now, assume selectbox change is the primary interaction after first run.
+# If a clear "New Analysis" button or similar is added, that would be the place to reset states like 'jp_features_df'.
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("Refer to [LiteLLM Documentation](https://docs.litellm.ai/docs/providers) for provider-specific API keys (e.g., `OPENAI_API_KEY`, `AZURE_API_KEY`, `COHERE_API_KEY`, `ANTHROPIC_API_KEY`) and other parameters. For local models like Ollama, ensure the server is running.")
