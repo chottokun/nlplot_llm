@@ -390,7 +390,8 @@ if st.button(f"Run {analysis_type}"):
                         if st.session_state.jp_features_df is not None and not st.session_state.jp_features_df.empty:
                             st.subheader("Plot Japanese Text Feature Distribution")
                             # Filter for numeric columns suitable for histogram
-                            numeric_cols = st.session_state.jp_features_df.select_dtypes(include=pd.np.number).columns.tolist()
+                            # Use include='number' for broader compatibility with pandas versions
+                            numeric_cols = st.session_state.jp_features_df.select_dtypes(include='number').columns.tolist()
                             if 'total_tokens' in numeric_cols: # Default to 'total_tokens' if available
                                 default_idx = numeric_cols.index('total_tokens')
                             elif numeric_cols:
