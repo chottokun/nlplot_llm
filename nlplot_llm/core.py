@@ -21,7 +21,7 @@ from plotly.offline import iplot
 from wordcloud import WordCloud
 import networkx as nx
 from networkx.algorithms import community
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict # Added Dict
 import asyncio # Added for asynchronous operations
 
 # Default path for Japanese Font, can be overridden
