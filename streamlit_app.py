@@ -354,7 +354,6 @@ if st.button(f"Run {analysis_type}"):
                             max_words=wc_max_words,
                             stopwords=wc_stopwords_list,
                             # font_path=font_path_to_use, # Pass if UI for font_path is enabled
-                            verbose=False # Reduce console output
                         )
                         if pil_image:
                             st.image(pil_image, use_column_width=True)
