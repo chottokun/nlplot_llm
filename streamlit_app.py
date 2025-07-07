@@ -4,6 +4,9 @@ import os # Added for os.getenv
 from nlplot_llm import NLPlotLLM # Updated import
 from nlplot_llm.core import JANOME_AVAILABLE # Import JANOME_AVAILABLE flag
 
+# Default font path for Japanese Word Cloud (relative to repository root)
+DEFAULT_JP_FONT_PATH = "fonts/ipaexg.ttf"
+
 # --- App Configuration ---
 st.set_page_config(page_title="NLPlotLLM Demo", layout="wide") # Updated title
 

@@ -2,9 +2,6 @@
 # Created by https://www.gitignore.io/api/code,linux,macos,python,pycharm,windows,jupyternotebooks
 # Edit at https://www.gitignore.io/?templates=code,linux,macos,python,pycharm,windows,jupyternotebooks
 
-### fonts ###
-fonts/ipaexg.ttf
-
 ### Code ###
 .vscode/*
 !.vscode/settings.json
