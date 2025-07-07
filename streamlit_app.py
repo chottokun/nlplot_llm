@@ -20,26 +20,44 @@ def get_nlplot_llm_instance(): # Updated function name
     # Note: Font path is not critical for LLM-only tasks but set for completeness.
     return NLPlotLLM(dummy_df, target_col='text_llm', use_cache=use_llm_cache, font_path=None)
 
-def get_nlplot_instance_for_traditional_nlp(input_text_lines: list[str], target_column_name: str = "processed_text"):
+def get_nlplot_instance_for_traditional_nlp(input_text_lines: list[str], language: str, target_column_name: str = "processed_text"):
     """
     Creates an NLPlotLLM instance suitable for traditional NLP tasks.
-    The input text lines are tokenized (by simple space splitting) and put into a DataFrame.
+    Tokenizes input text based on the selected language.
     """
+    # TODO: Consider making font_path configurable via Streamlit UI if WordCloud is added.
+    font_path_ui = None # Placeholder
+
+    t_janome = None
+    if language == language_options[1] and JANOME_AVAILABLE: # "Japanese (Janome for tokenization)"
+        try:
+            from janome.tokenizer import Tokenizer as JanomeTokenizer # Local import
+            t_janome = JanomeTokenizer(wakati=True)
+        except Exception as e:
+            st.error(f"Failed to initialize Janome Tokenizer: {e}")
+            # Fallback to space splitting will occur if t_janome remains None
+
     if not input_text_lines:
-        st.warning("No input text provided for traditional NLP analysis. Using empty DataFrame.")
-        # NLPlotLLM expects a DataFrame with a specific column, even if empty.
+        # st.warning("No input text provided for traditional NLP analysis. Using empty DataFrame.")
+        # Warning is now issued when `lines` is empty before calling this function.
         df = pd.DataFrame({target_column_name: pd.Series([], dtype='object')})
     else:
-        # Simple tokenization (splitting by space) for traditional NLP functions
-        # NLPlotLLM's traditional methods expect a list of tokens.
-        tokenized_lines = [line.split() for line in input_text_lines]
+        tokenized_lines = []
+        if language == language_options[1] and JANOME_AVAILABLE and t_janome:
+            for line in input_text_lines:
+                tokens = list(t_janome.tokenize(line))
+                tokenized_lines.append(tokens)
+        else: # Default to space splitting (English or fallback for Japanese if Janome fails/unavailable)
+            if language == language_options[1] and not JANOME_AVAILABLE:
+                # This warning is now displayed below the radio button, but good to be defensive.
+                # st.warning("Janome not available, falling back to space separation for Japanese.")
+                pass
+            for line in input_text_lines:
+                tokenized_lines.append(line.split())
         df = pd.DataFrame({target_column_name: tokenized_lines})
 
-    # For traditional NLP, caching at the NLPlotLLM level is not currently implemented for its plotting methods.
-    # Font path might be relevant for word cloud.
-    # TODO: Consider making font_path configurable via Streamlit UI if WordCloud is added.
-    font_path_ui = None # Placeholder for potential future UI input for font
     return NLPlotLLM(df, target_col=target_column_name, font_path=font_path_ui, use_cache=False)
+
 
 # --- Sidebar for LLM Configuration ---
 st.sidebar.header("LLM Configuration (LiteLLM)")
@@ -96,7 +114,22 @@ st.title("NLPlotLLM Functions Demo") # Updated title
 # Input Text Area
 st.header("Input Text")
 input_text = st.text_area("Enter text to analyze (one document per line for multiple inputs):", height=200,
-                          value="This is a wonderfully positive statement!\nThis movie was terrible and a waste of time.\nGlobal warming is a serious issue that needs addressing.")
+                          value="This is a wonderfully positive statement!\nThis movie was terrible and a waste of time.\nGlobal warming is a serious issue that needs addressing.\nこれは素晴らしい肯定的な声明です。\nこの映画はひどく、時間の無駄でした。\n地球温暖化は深刻な問題であり、対処が必要です。")
+
+# Language Selection for Traditional NLP tasks
+st.header("Language Setting (for Traditional NLP)")
+# This setting will primarily affect N-gram and Word Cloud
+# Japanese Text Analysis will always use Janome if available.
+language_options = ["English (Space-separated)", "Japanese (Janome for tokenization)"]
+selected_language = st.radio(
+    "Select language for tokenization in N-gram/Word Cloud:",
+    language_options,
+    index=0, # Default to English
+    key="language_select_key"
+)
+if selected_language == language_options[1] and not JANOME_AVAILABLE:
+    st.warning("Japanese is selected, but Janome is not available. Tokenization will fall back to space separation. Please install Janome for proper Japanese processing: `pip install janome`")
+
 
 # Analysis Type Selection
 st.header("Analysis Type")
@@ -302,7 +335,7 @@ if st.button(f"Run {analysis_type}"):
                 # For N-gram, we need an NLPlotLLM instance with the actual text data
                 # The get_nlplot_instance_for_traditional_nlp helper function prepares this.
                 # The target column name used in the helper is "processed_text" by default.
-                npt_traditional = get_nlplot_instance_for_traditional_nlp(lines, target_column_name="input_tokens")
+                npt_traditional = get_nlplot_instance_for_traditional_nlp(lines, selected_language, target_column_name="input_tokens")
 
                 # Prepare stopwords list
                 stopwords_list = [sw.strip() for sw in ngram_stopwords_str.split(',') if sw.strip()]
@@ -341,7 +374,7 @@ if st.button(f"Run {analysis_type}"):
 
             elif analysis_type == "Word Cloud (Traditional)":
                 st.info(f"Processing {len(lines)} text document(s) for Word Cloud...")
-                npt_traditional = get_nlplot_instance_for_traditional_nlp(lines, target_column_name="input_tokens_wc")
+                npt_traditional = get_nlplot_instance_for_traditional_nlp(lines, selected_language, target_column_name="input_tokens_wc")
 
                 # Prepare stopwords list for word cloud
                 wc_stopwords_list = [sw.strip() for sw in wc_stopwords_str.split(',') if sw.strip()]
