@@ -35,6 +35,10 @@
 - Asynchronous operations (`*_async` methods)  
 - Helpers for text chunking (via Langchain TextSplitters)  
 
+### Additional Traditional NLP Features
+- TF-IDF top N features extraction (overall corpus / per document) using [scikit-learn](https://scikit-learn.org/stable/modules/generated/sklearn.feature_extraction.text.TfidfVectorizer.html)
+- Keyword in Context (KWIC) display
+
 ## Installation
 
 ### From GitHub (latest)
@@ -59,6 +63,12 @@ Installs core dependencies (`litellm`, `diskcache`, `langchain-text-splitters`, 
 
 ```bash
 pip install janome
+```
+
+- TF-IDF and other scikit-learn based features:
+
+```bash
+pip install scikit-learn
 ```
 
 - Development requirements:
@@ -110,11 +120,11 @@ A demo app (`streamlit_app.py`) showcases LLM integration.
 
 ```bash
 # From repo root
-pip install streamlit nlplot_llm pandas litellm langchain-text-splitters
+pip install streamlit nlplot_llm pandas litellm langchain-text-splitters scikit-learn janome
 streamlit run streamlit_app.py
 ```
 
-Use the sidebar to choose model, prompts, caching, and analysis type.
+Use the sidebar to choose model, prompts, caching, and analysis type. The demo now includes TF-IDF top features and Keyword in Context (KWIC) functionalities.
 
 ## Streamlit Demo Notes
 

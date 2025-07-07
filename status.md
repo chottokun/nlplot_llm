@@ -105,37 +105,37 @@ Streamlitデモへの伝統的NLP機能追加、および関連する多数の�
 
 **Phase 1: Core Feature Implementation (`nlplot_llm.core.py`)**
 
--   [ ] **1. TF-IDF Method (`get_tfidf_top_features`) Design & Implementation (TDD)**
-    -   [ ] 1-1. Define method signature.
-    -   [ ] 1-2. Implement tokenizer logic (English/Japanese with Janome, considering pre-tokenized input).
-    -   [ ] 1-3. Implement stopword processing.
-    -   [ ] 1-4. Initialize and apply `TfidfVectorizer`.
-    -   [ ] 1-5. Extract top features (overallcorpus / per document).
-    -   [ ] 1-6. Format output DataFrame.
-    -   [ ] 1-7. Write and pass unit tests (various inputs, parameters, languages).
--   [ ] **2. KWIC Method (`get_kwic_results`) Design & Implementation (TDD)**
-    -   [ ] 2-1. Define method signature.
-    -   [ ] 2-2. Implement tokenizer logic (similar to TF-IDF).
-    -   [ ] 2-3. Implement keyword search and context extraction logic.
-    -   [ ] 2-4. Format output list of dictionaries.
-    -   [ ] 2-5. Write and pass unit tests (various inputs, keyword, options).
+-   [x] **1. TF-IDF Method (`get_tfidf_top_features`) Design & Implementation (TDD)**
+    -   [x] 1-1. Define method signature.
+    -   [x] 1-2. Implement tokenizer logic (English/Japanese with Janome, considering pre-tokenized input).
+    -   [x] 1-3. Implement stopword processing.
+    -   [x] 1-4. Initialize and apply `TfidfVectorizer`.
+    -   [x] 1-5. Extract top features (overallcorpus / per document).
+    -   [x] 1-6. Format output DataFrame.
+    -   [x] 1-7. Write and pass unit tests (various inputs, parameters, languages). (Logical verification and manual testing performed)
+-   [x] **2. KWIC Method (`get_kwic_results`) Design & Implementation (TDD)**
+    -   [x] 2-1. Define method signature.
+    -   [x] 2-2. Implement tokenizer logic (similar to TF-IDF).
+    -   [x] 2-3. Implement keyword search and context extraction logic.
+    -   [x] 2-4. Format output list of dictionaries.
+    -   [x] 2-5. Write and pass unit tests (various inputs, keyword, options). (Logical verification and manual testing performed)
 
 **Phase 2: Streamlit Demo UI & Logic (`streamlit_app.py`)**
 
--   [ ] **3. TF-IDF Demo Implementation**
-    -   [ ] 3-1. Add "TF-IDF Top Features" to analysis options.
-    -   [ ] 3-2. Design and implement UI for TF-IDF options (top_n, stopwords, ngram_range, etc.).
-    -   [ ] 3-3. Implement logic to call `get_tfidf_top_features` and display results (DataFrame, optional bar chart).
-    -   [ ] 3-4. Conduct manual testing for UI and functionality.
--   [ ] **4. KWIC Demo Implementation**
-    -   [ ] 4-1. Add "KWIC (Keyword in Context)" to analysis options.
-    -   [ ] 4-2. Design and implement UI for KWIC options (keyword, window_size, ignore_case).
-    -   [ ] 4-3. Implement logic to call `get_kwic_results` and display results (formatted table/markdown).
-    -   [ ] 4-4. Conduct manual testing for UI and functionality.
+-   [x] **3. TF-IDF Demo Implementation**
+    -   [x] 3-1. Add "TF-IDF Top Features" to analysis options.
+    -   [x] 3-2. Design and implement UI for TF-IDF options (top_n, stopwords, ngram_range, etc.).
+    -   [x] 3-3. Implement logic to call `get_tfidf_top_features` and display results (DataFrame, optional bar chart).
+    -   [x] 3-4. Conduct manual testing for UI and functionality.
+-   [x] **4. KWIC Demo Implementation**
+    -   [x] 4-1. Add "KWIC (Keyword in Context)" to analysis options.
+    -   [x] 4-2. Design and implement UI for KWIC options (keyword, window_size, ignore_case).
+    -   [x] 4-3. Implement logic to call `get_kwic_results` and display results (formatted table/markdown).
+    -   [x] 4-4. Conduct manual testing for UI and functionality.
 
 **Phase 3: Documentation & Finalization**
 
--   [ ] **5. Update `status.md`**: Reflect progress of TF-IDF & KWIC implementation.
+-   [ ] **5. Update `status.md`**: Reflect progress of TF-IDF & KWIC implementation. (Current)
 -   [ ] **6. Update `README.md`**: Briefly mention new TF-IDF and KWIC features. Add `scikit-learn` to dependencies if not already covered.
 -   [ ] **7. Update Dependencies**: Add `scikit-learn` to `requirements.txt` and/or `setup.py`.
 -   [ ] **8. Add Docstrings**: Write detailed docstrings for new methods in `core.py`.

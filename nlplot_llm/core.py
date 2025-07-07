@@ -384,12 +384,48 @@ class NLPlotLLM():
         return_type: str = "overall"  # "overall" または "per_document"
     ) -> pd.DataFrame:
         """
-        Calculates TF-IDF scores for the given text series and returns top features.
-        (Further details will be added as implementation progresses)
+        Calculates TF-IDF (Term Frequency-Inverse Document Frequency) scores for
+        the given text series and returns the top N features (words/phrases).
+
+        Args:
+            text_series (pd.Series): A pandas Series containing text documents (strings).
+            language (str, optional): The language of the text. Defaults to "english".
+                Supported: "english", "japanese". Affects tokenization and default stopwords.
+            n_features (int, optional): The number of top features to return. Defaults to 10.
+            custom_stopwords (Optional[List[str]], optional): A list of custom stopwords
+                to use in addition to language-specific defaults and instance defaults.
+                Defaults to None.
+            use_janome_tokenizer_for_japanese (bool, optional): If True and language is "japanese",
+                Janome (if available) will be used for tokenization. Otherwise, uses space-based
+                splitting or TfidfVectorizer's default. Defaults to True.
+            tfidf_ngram_range (tuple, optional): The lower and upper boundary of the range of n-values
+                for different n-grams to be extracted. E.g., (1, 1) means only unigrams,
+                (1, 2) means unigrams and bigrams. Defaults to (1, 1).
+            tfidf_max_df (float, optional): When building the vocabulary, ignore terms that have
+                a document frequency strictly higher than the given threshold (corpus-specific
+                stop words). Value between 0.0 and 1.0. Defaults to 1.0.
+            tfidf_min_df (int, optional): When building the vocabulary, ignore terms that have
+                a document frequency strictly lower than the given threshold.
+                Defaults to 1.
+            return_type (str, optional): Specifies how to calculate and return top features.
+                - "overall": Returns top N features based on their aggregated TF-IDF scores
+                  across the entire corpus. Output columns: ['word', 'tfidf_score'].
+                - "per_document": Returns top N features for each document. Output columns:
+                  ['document_id', 'word', 'tfidf_score'].
+                Defaults to "overall".
+
+        Returns:
+            pd.DataFrame: A DataFrame containing the top TF-IDF features.
+                The columns depend on the `return_type` argument.
+                Returns an empty DataFrame if processing fails or no features are found.
+
+        Requires:
+            scikit-learn: For TF-IDF calculation.
+            janome: For Japanese tokenization if `language="japanese"` and `use_janome_tokenizer_for_japanese=True`.
         """
         # Initial minimal implementation to pass basic tests
         # This will be expanded in subsequent steps.
-        print(f"get_tfidf_top_features called with: language='{language}', n_features={n_features}, return_type='{return_type}'") # Placeholder for debugging
+        # print(f"get_tfidf_top_features called with: language='{language}', n_features={n_features}, return_type='{return_type}'") # Placeholder for debugging
         if not isinstance(text_series, pd.Series):
             # Or raise TypeError("text_series must be a pandas Series")
             print("Warning: text_series is not a pandas Series. Returning empty DataFrame.")
@@ -564,10 +600,36 @@ class NLPlotLLM():
     ) -> List[Dict[str, Any]]:
         """
         Finds Keyword in Context (KWIC) results from the text series.
-        (Further details will be added as implementation progresses)
+        It identifies occurrences of a specified keyword and extracts the surrounding
+        text (context).
+
+        Args:
+            text_series (pd.Series): A pandas Series containing text documents (strings).
+            keyword (str): The keyword to search for.
+            language (str, optional): The language of the text. Defaults to "english".
+                Supported: "english", "japanese". Affects tokenization.
+            window_size (int, optional): The number of words/tokens to include on each
+                side of the keyword in the context. Defaults to 5.
+            use_janome_tokenizer_for_japanese (bool, optional): If True and language is "japanese",
+                Janome (if available) will be used for tokenization. Otherwise, uses space-based
+                splitting. Defaults to True.
+            ignore_case (bool, optional): If True, the keyword search will be case-insensitive.
+                Defaults to True.
+
+        Returns:
+            List[Dict[str, Any]]: A list of dictionaries, where each dictionary
+            represents a KWIC result and contains the following keys:
+            - 'document_id': Identifier of the document (e.g., index from text_series or sequential number).
+            - 'left_context': String of tokens to the left of the keyword.
+            - 'keyword_match': The actual matched keyword (preserving original case).
+            - 'right_context': String of tokens to the right of the keyword.
+            Returns an empty list if the keyword is not found or if inputs are invalid.
+
+        Requires:
+            janome: For Japanese tokenization if `language="japanese"` and `use_janome_tokenizer_for_japanese=True`.
         """
         # Initial minimal implementation
-        print(f"get_kwic_results called with: keyword='{keyword}', language='{language}', window_size={window_size}") # Placeholder
+        # print(f"get_kwic_results called with: keyword='{keyword}', language='{language}', window_size={window_size}") # Placeholder
         if not isinstance(text_series, pd.Series) or not isinstance(keyword, str):
             print("Warning: Invalid input types for KWIC. text_series must be a Series and keyword a string.")
             return []
