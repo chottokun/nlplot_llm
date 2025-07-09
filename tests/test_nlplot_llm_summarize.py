@@ -392,4 +392,4 @@ def test_summarize_text_llm_chunking_true_but_splitters_unavailable(mock_litellm
     args, kwargs = mock_litellm_completion.call_args
     # Check if the prompt used was the default direct summarization prompt
     assert "Please summarize the following text concisely: {text}".format(text=test_text) in kwargs['messages'][0]['content']
-```
+

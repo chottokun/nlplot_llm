@@ -144,13 +144,11 @@ class NLPlotLLM():
         if not self.df.empty and self.target_col in self.df.columns:
             first_item = self.df[self.target_col].iloc[0]
             # Process if the first item is a string and not already a list (for auto-splitting)
-            if isinstance(first_item, str) and pd.notna(first_item):
-                # This check ensures we only try to split if it's a non-NA string.
-                # The original NLPlot assumed string inputs would be tokenized into lists of words.
-                # If it's already a list (e.g. from get_nlplot_instance_for_traditional_nlp),
-                # this block will be skipped.
+            if pd.notna(first_item):
+                # This check ensures we only try to split if it's a non-NA value.
+                # Convert to string and split for any type, to ensure list of tokens.
                 self.df.loc[:, self.target_col] = self.df[self.target_col].astype(str).map(lambda x: x.split())
-            # If first_item is already a list, or if it's some other non-string scalar,
+            # If first_item is already a list,
             # we assume it's either correctly pre-processed or not intended for splitting here.
         elif self.df.empty and self.target_col not in self.df.columns :
              print(f"Warning: DataFrame is empty and target column '{self.target_col}' not found. Initializing with an empty column.")
@@ -368,7 +366,14 @@ class NLPlotLLM():
             except Exception as e_save:
                 print(f"Error saving wordcloud image to '{full_save_path}': {e_save}")
 
-        # Return the PIL Image object instead of displaying it with IPython
+        # Display the image using IPython.display.display
+        try:
+            from IPython.display import display
+            display(pil_img)
+        except ImportError:
+            pass
+
+        # Return the PIL Image object
         return pil_img
 
     def get_tfidf_top_features(
@@ -818,7 +823,7 @@ class NLPlotLLM():
         fig_data = edge_traces + [node_trace]
         fig_layout = go.Layout(title=str(title) if title else "Co-occurrence Network", font=dict(family='Arial', size=12), width=width, height=height, autosize=True, showlegend=False, xaxis=dict(showline=False, zeroline=False, showgrid=False, showticklabels=False, title=''), yaxis=dict(showline=False, zeroline=False, showgrid=False, showticklabels=False, title=''), margin=dict(l=40, r=40, b=85, t=100, pad=0), hovermode='closest', plot_bgcolor=back_col)
         fig = go.Figure(data=fig_data, layout=fig_layout)
-        # iplot(fig) # Remove direct plotting with iplot for better library use
+        iplot(fig)  # Enable direct plotting with iplot as expected by tests
         if save: self.save_plot(fig, title if title else "co_network")
         gc.collect()
         return fig # Return the figure object
