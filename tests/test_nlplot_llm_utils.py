@@ -245,4 +245,4 @@ def test_chunk_text_character_actual(npt_llm_utils_instance):
         pytest.fail("_chunk_text method not found.")
     except Exception as e:
         pytest.fail(f"_chunk_text with CharacterTextSplitter failed: {e}")
-```
+

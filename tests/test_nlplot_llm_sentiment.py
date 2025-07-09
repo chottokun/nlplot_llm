@@ -39,9 +39,8 @@ except ImportError:
             class APIConnectionError(Exception): pass
             class AuthenticationError(Exception): pass
             class RateLimitError(Exception): pass
+            class BadRequestError(Exception): pass
     litellm = litellm_dummy_exc() # type: ignore
-
-
 @pytest.fixture
 def npt_llm_instance(tmp_path):
     """Provides a basic NLPlotLLM instance for LLM tests, ensuring output path exists.""" # Updated class name
@@ -333,4 +332,4 @@ def test_analyze_sentiment_llm_empty_text_in_series(mock_litellm_completion, npt
 
     # LLM should only be called for "Good text" and "Bad text"
     assert mock_litellm_completion.call_count == 2
-```
+
