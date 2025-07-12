@@ -144,7 +144,7 @@ class NLPlotLLM():
         if not self.df.empty and self.target_col in self.df.columns:
             first_item = self.df[self.target_col].iloc[0]
             # Process if the first item is a string and not already a list (for auto-splitting)
-            if pd.notna(first_item):
+            if isinstance(first_item, str):
                 # This check ensures we only try to split if it's a non-NA value.
                 # Convert to string and split for any type, to ensure list of tokens.
                 self.df.loc[:, self.target_col] = self.df[self.target_col].astype(str).map(lambda x: x.split())
@@ -286,7 +286,7 @@ class NLPlotLLM():
         if save: self.save_plot(fig, title if title else "word_distribution")
         return fig
 
-    def wordcloud(self, width: int = 800, height: int = 500, max_words: int = 100, max_font_size: int = 80, stopwords: list = [], colormap: str = None, mask_file: str = None, font_path: str = None, save: bool = False) -> None:
+    def wordcloud(self, width: int = 800, height: int = 500, max_words: int = 100, max_font_size: int = 80, stopwords: list = [], colormap: str = None, mask_file: str = None, font_path: str = None, save: bool = False) -> Optional[Image.Image]:
         # Determine the font path to use
         wc_font_path = None
         if font_path is not None: # User explicitly provided a font_path for this call
@@ -339,16 +339,16 @@ class NLPlotLLM():
             wordcloud_instance.generate(text_corpus)
         except OSError as e: # Typically font not found or unreadable by WordCloud/FreeType
              print(f"Error during WordCloud generation (possibly font-related): {e}. If no font_path was specified, ensure system fonts are available. If a font_path was specified ('{wc_font_path}'), check its validity.")
-             return
+             return None
         except ValueError as e: # Often from empty corpus after stopword removal
             if "empty" in str(e).lower() or "zero" in str(e).lower():
                 print(f"Warning: WordCloud could not be generated. All words might have been filtered out or corpus is empty. Details: {e}")
             else:
                 print(f"An unexpected ValueError occurred during WordCloud generation: {e}")
-            return
+            return None
         except Exception as e:
             print(f"An unexpected error occurred during WordCloud generation: {e}")
-            return
+            return None
 
         img_array = wordcloud_instance.to_array()
         pil_img = Image.fromarray(img_array)
@@ -799,9 +799,9 @@ class NLPlotLLM():
         elif trace_type == "node": return go.Scatter(x=kwargs['x'], y=kwargs['y'], text=kwargs['text'], mode='markers+text', textposition='bottom center', hoverinfo="text", marker=kwargs['marker'])
         raise ValueError(f"Unknown trace_type: {trace_type}")
 
-    def co_network(self, title:str = None, sizing:int=100, node_size_col:str='adjacency_frequency', color_palette:str='hls', layout_func=nx.kamada_kawai_layout, light_theme:bool=True, width:int=1700, height:int=1200, save:bool=False) -> None:
-        if not hasattr(self, 'G') or not self.G.nodes(): print("Warning: Graph not built or empty. Cannot plot co-occurrence network."); return
-        if not hasattr(self, 'node_df') or self.node_df.empty: print("Warning: Node DataFrame not available or empty. Cannot plot co-occurrence network."); return
+    def co_network(self, title:str = None, sizing:int=100, node_size_col:str='adjacency_frequency', color_palette:str='hls', layout_func=nx.kamada_kawai_layout, light_theme:bool=True, width:int=1700, height:int=1200, save:bool=False) -> go.Figure:
+        if not hasattr(self, 'G') or not self.G.nodes(): print("Warning: Graph not built or empty. Cannot plot co-occurrence network."); return go.Figure()
+        if not hasattr(self, 'node_df') or self.node_df.empty: print("Warning: Node DataFrame not available or empty. Cannot plot co-occurrence network."); return go.Figure()
         if node_size_col not in self.node_df.columns:
             print(f"Warning: node_size column '{node_size_col}' not found in node_df. Using 'adjacency_frequency'."); node_size_col = 'adjacency_frequency'
             if node_size_col not in self.node_df.columns: print(f"Warning: Default node_size column 'adjacency_frequency' also not found. Node sizes will be uniform."); self.node_df['uniform_size'] = 10; node_size_col = 'uniform_size'
@@ -823,7 +823,6 @@ class NLPlotLLM():
         fig_data = edge_traces + [node_trace]
         fig_layout = go.Layout(title=str(title) if title else "Co-occurrence Network", font=dict(family='Arial', size=12), width=width, height=height, autosize=True, showlegend=False, xaxis=dict(showline=False, zeroline=False, showgrid=False, showticklabels=False, title=''), yaxis=dict(showline=False, zeroline=False, showgrid=False, showticklabels=False, title=''), margin=dict(l=40, r=40, b=85, t=100, pad=0), hovermode='closest', plot_bgcolor=back_col)
         fig = go.Figure(data=fig_data, layout=fig_layout)
-        iplot(fig)  # Enable direct plotting with iplot as expected by tests
         if save: self.save_plot(fig, title if title else "co_network")
         gc.collect()
         return fig # Return the figure object
@@ -837,7 +836,7 @@ class NLPlotLLM():
         if node_sizes_numeric.nunique() <= 1:
             if node_sizes_numeric.iloc[0] == 0 : return pd.Series([sizing_factor * 0.1] * len(self.node_df), index=self.node_df.index)
             else: return pd.Series([sizing_factor * 0.5] * len(self.node_df), index=self.node_df.index)
-        min_max_scaler = preprocessing.MinMaxScaler(feature_range=(0.1, 1.0))
+        min_max_scaler = preprocessing.MinMaxScaler(feature_range=(0.1, 1.0)) # type: ignore
         scaled_values = min_max_scaler.fit_transform(node_sizes_numeric.values.reshape(-1, 1)).flatten()
         return pd.Series(scaled_values, index=self.node_df.index) * sizing_factor
 
@@ -1418,193 +1417,6 @@ class NLPlotLLM():
                 processed_results.append({"text": original_text, category_col_name: [] if multi_label else "error", "raw_llm_output": str(res_or_exc)})
             else: # Remove the temporary '_multi_label' key before creating DataFrame
                 res_or_exc.pop("_multi_label", None)
-                processed_results.append(res_or_exc)
-
-        if self.cache:
-            try: self.cache.close()
-            except Exception as e: print(f"Warning: Error closing cache: {e}")
-
-        return pd.DataFrame(processed_results, columns=default_columns)
-
-    async def _categorize_text_single_async(
-        self,
-        text_to_categorize: str,
-        categories: List[str],
-        category_list_str: str, # Pre-formatted string of categories for prompt
-        model: str,
-        prompt_template_str: str,
-        multi_label: bool,
-        temperature: float,
-        current_use_cache: bool,
-        litellm_kwargs: dict
-    ) -> dict:
-        """Helper coroutine to process a single text for categorization asynchronously, with caching."""
-        original_text_for_df = str(text_to_categorize) if pd.notna(text_to_categorize) else ""
-        category_col_name = "categories" if multi_label else "category"
-        parsed_categories_result: Any = [] if multi_label else "unknown"
-        raw_llm_response_content = ""
-
-        if not original_text_for_df.strip():
-            raw_llm_response_content = "Input text was empty or whitespace."
-        else:
-            cacheable_kwargs_items = sorted(
-                (k, v) for k, v in litellm_kwargs.items() if k in ("temperature", "max_tokens", "top_p")
-            )
-            cache_key_tuple = (
-                "categorize_text_llm", model, prompt_template_str,
-                original_text_for_df, tuple(sorted(categories)), multi_label,
-                tuple(cacheable_kwargs_items)
-            )
-
-            cached_result = None
-            if current_use_cache and self.cache:
-                try: cached_result = self.cache.get(cache_key_tuple)
-                except Exception as e: print(f"Warning: Async cache get failed for categorize. Error: {e}")
-
-            if cached_result is not None:
-                parsed_categories_result = cached_result["categories_result"]
-                raw_llm_response_content = cached_result["raw_llm_output"]
-            else:
-                try:
-                    format_args = {"text": original_text_for_df}
-                    if "{categories}" in prompt_template_str: format_args["categories"] = category_list_str
-                    formatted_content_for_llm = prompt_template_str.format(**format_args)
-                    messages = [{"role": "user", "content": formatted_content_for_llm}]
-
-                    completion_kwargs = {**litellm_kwargs}
-                    if 'temperature' not in completion_kwargs: completion_kwargs['temperature'] = temperature
-
-                    response = await litellm.acompletion(model=model, messages=messages, **completion_kwargs)
-
-                    if response.choices and response.choices[0].message:
-                        raw_llm_response_content = response.choices[0].message.content or ""
-                    else: raw_llm_response_content = str(response)
-
-                    processed_output = raw_llm_response_content.strip().lower()
-                    if multi_label:
-                        found_cats_raw = [cat.strip() for cat in processed_output.split(',')]
-                        parsed_categories_result = [
-                            og_cat for og_cat in categories
-                            if og_cat.lower() in [fcr.lower() for fcr in found_cats_raw if fcr and fcr != 'none']
-                        ]
-                    else:
-                        parsed_categories_result = "unknown"
-                        exact_match_found = False
-                        for cat_og in categories:
-                            if cat_og.lower() == processed_output:
-                                parsed_categories_result = cat_og; exact_match_found = True; break
-                        if not exact_match_found: # Fallback to substring match if no exact match
-                            for cat_og in categories:
-                                if cat_og.lower() in processed_output: # Check if category is IN output
-                                    parsed_categories_result = cat_og; break
-                        if parsed_categories_result == "unknown" and processed_output in ["unknown", "none"]: pass
-
-                    if current_use_cache and self.cache:
-                        try: self.cache.set(cache_key_tuple, {"categories_result": parsed_categories_result, "raw_llm_output": raw_llm_response_content})
-                        except Exception as e: print(f"Warning: Async cache set failed for categorize. Error: {e}")
-                except Exception as e:
-                    print(f"Error in _categorize_text_single_async for '{original_text_for_df[:30]}...': {e}")
-                    parsed_categories_result = [] if multi_label else "error"
-                    raw_llm_response_content = str(e)
-
-        return {"text": original_text_for_df, category_col_name: parsed_categories_result, "raw_llm_output": raw_llm_response_content, "_multi_label": multi_label} # Temp key for main async method
-
-    async def categorize_text_llm_async(
-        self,
-        text_series: pd.Series,
-        categories: List[str],
-        model: str,
-        prompt_template_str: Optional[str] = None,
-        multi_label: bool = False,
-        temperature: float = 0.0,
-        use_cache: Optional[bool] = None,
-        concurrency_limit: Optional[int] = None,
-        return_exceptions: bool = True,
-        **litellm_kwargs
-    ) -> pd.DataFrame:
-        """Asynchronously categorizes texts into predefined categories."""
-        category_col_name = "categories" if multi_label else "category"
-        default_columns = ["text", category_col_name, "raw_llm_output"]
-
-        if not LITELLM_AVAILABLE:
-            print("Warning: LiteLLM is not available for async categorization.")
-            return pd.DataFrame(columns=default_columns)
-        if not isinstance(text_series, pd.Series):
-            print("Warning: Input 'text_series' must be a pandas Series.")
-            return pd.DataFrame(columns=default_columns)
-        if text_series.empty: return pd.DataFrame(columns=default_columns)
-        if not categories or not isinstance(categories, list) or not all(isinstance(c, str) and c for c in categories):
-            raise ValueError("Categories list must be a non-empty list of non-empty strings.")
-
-        current_use_cache = use_cache if use_cache is not None else self.use_cache_default
-        category_list_str_for_prompt = ", ".join(f"'{c}'" for c in categories)
-
-        final_prompt_template_str = prompt_template_str
-        if final_prompt_template_str is None:
-            if multi_label:
-                final_prompt_template_str = (
-                    f"Analyze the following text and classify it into one or more of these categories: {category_list_str_for_prompt}. "
-                    f"Return a comma-separated list of the matching category names. If no categories match, return 'none'. Text: {{text}}"
-                )
-            else:
-                final_prompt_template_str = (
-                    f"Analyze the following text and classify it into exactly one of these categories: {category_list_str_for_prompt}. "
-                    f"Return only the single matching category name. If no categories match, return 'unknown'. Text: {{text}}"
-                )
-
-        if "{text}" not in final_prompt_template_str: # Should also check for {categories} if prompt needs it
-            results = [{"text": str(txt), category_col_name: [] if multi_label else "error", "raw_llm_output": "Prompt template error: missing {text}"} for txt in text_series]
-            return pd.DataFrame(results, columns=default_columns)
-
-        tasks = []
-        semaphore = asyncio.Semaphore(concurrency_limit) if concurrency_limit and concurrency_limit > 0 else None
-
-        async def task_wrapper(text_input):
-            if semaphore:
-                async with semaphore:
-                    return await self._categorize_text_single_async(
-                        text_input, categories, category_list_str_for_prompt, model, final_prompt_template_str,
-                        multi_label, temperature, current_use_cache, litellm_kwargs
-                    )
-            else:
-                return await self._categorize_text_single_async(
-                    text_input, categories, category_list_str_for_prompt, model, final_prompt_template_str,
-                    multi_label, temperature, current_use_cache, litellm_kwargs
-                )
-
-        for text_input in text_series:
-            tasks.append(task_wrapper(text_input))
-
-        all_results_raw = await asyncio.gather(*tasks, return_exceptions=return_exceptions)
-
-        processed_results = []
-        for i, res_or_exc in enumerate(all_results_raw):
-            original_text = str(text_series.iloc[i]) if pd.notna(text_series.iloc[i]) else ""
-            # Determine category_col_name based on _multi_label from result if it exists, else from input
-            current_multi_label_for_row = multi_label # Default to input multi_label
-            if isinstance(res_or_exc, dict) and "_multi_label" in res_or_exc:
-                current_multi_label_for_row = res_or_exc["_multi_label"]
-
-            col_name_for_this_row = "categories" if current_multi_label_for_row else "category"
-
-            if isinstance(res_or_exc, Exception):
-                # Ensure the column name matches what the DataFrame expects based on the input `multi_label`
-                # This part is tricky if results can have mixed multi_label states due to errors.
-                # For simplicity, we'll use the original multi_label to determine error column structure.
-                error_val = [] if multi_label else "error"
-                processed_results.append({"text": original_text, category_col_name: error_val, "raw_llm_output": str(res_or_exc)})
-            else:
-                res_or_exc.pop("_multi_label", None) # Clean up temp key
-                # If the helper used a different key (e.g. processed single when expecting multi), adjust.
-                # This primarily handles the structure for the DataFrame, assuming `category_col_name` is the target.
-                if col_name_for_this_row != category_col_name and category_col_name in res_or_exc :
-                     res_or_exc[col_name_for_this_row] = res_or_exc.pop(category_col_name)
-                elif col_name_for_this_row != category_col_name and col_name_for_this_row in res_or_exc:
-                    # If the result has the "correct" dynamic column name, but it's not the one expected by default_columns
-                    # ensure it's placed in the column name that default_columns expects.
-                     res_or_exc[category_col_name] = res_or_exc.pop(col_name_for_this_row)
-
-
                 processed_results.append(res_or_exc)
 
         if self.cache:
