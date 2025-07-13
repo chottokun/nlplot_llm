@@ -98,25 +98,20 @@ import re
 
 def _prepare_data_for_graph(nlplot_instance, stopwords_param: list):
     current_stopwords = set(sw.lower() for sw in stopwords_param + nlplot_instance.default_stopwords)
-    print(f"DEBUG: Current Stopwords: {current_stopwords}")
     nlplot_instance.df_edit = nlplot_instance.df.copy()
 
     def process_doc(doc):
         if not isinstance(doc, list):
-            print(f"DEBUG: doc is not a list: {doc}")
             return []
 
         words = [re.sub(r'[^\w\s]', '', w).lower() for w in doc]
-        print(f"DEBUG: Original words (after lower/punct): {words}")
 
         filtered_words = [w for w in words if w and w not in current_stopwords]
-        print(f"DEBUG: Filtered words: {filtered_words}")
 
         return filtered_words
 
     nlplot_instance.df_edit.loc[:, nlplot_instance.target_col] = nlplot_instance.df_edit[nlplot_instance.target_col].apply(process_doc)
     nlplot_instance._batches = nlplot_instance.df_edit[nlplot_instance.target_col].tolist()
-    print(f"DEBUG: Final batches: {nlplot_instance._batches}")
 
 def _initialize_empty_graph_attributes(nlplot_instance, graph_exists_but_no_nodes=False):
     nlplot_instance.G = nx.Graph()

@@ -1,21 +1,32 @@
-nlplot_llm package
-==================
+nlplot\_llm package
+===================
+
+Subpackages
+-----------
+
+.. toctree::
+   :maxdepth: 4
+
+   nlplot_llm.llm
+   nlplot_llm.network
+   nlplot_llm.plot
+   nlplot_llm.utils
 
 Submodules
 ----------
 
-nlplot_llm.core module
-----------------------
+nlplot\_llm.core module
+-----------------------
 
 .. automodule:: nlplot_llm.core
    :members:
-   :undoc-members:
    :show-inheritance:
+   :undoc-members:
 
 Module contents
 ---------------
 
 .. automodule:: nlplot_llm
    :members:
-   :undoc-members:
    :show-inheritance:
+   :undoc-members:

@@ -1,5 +1,5 @@
-API Reference
-=============
+nlplot_llm
+==========
 
 .. toctree::
    :maxdepth: 4
