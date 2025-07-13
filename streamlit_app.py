@@ -203,7 +203,7 @@ wcd_bins = 20 # Default number of bins for histogram
 
 # Co-occurrence Analysis Options
 co_stopwords_str = ""
-co_min_edge_freq = 5
+co_min_edge_freq = 1
 # For storing the npt instance after build_graph to reuse for sunburst
 if 'npt_graph_instance' not in st.session_state:
     st.session_state.npt_graph_instance = None

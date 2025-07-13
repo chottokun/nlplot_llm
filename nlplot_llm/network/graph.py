@@ -85,9 +85,9 @@ def build_graph(nlplot_instance, stopwords: list = [], min_edge_frequency: int =
     return None
 
 def _prepare_data_for_graph(nlplot_instance, stopwords_param: list):
-    current_stopwords = list(set(stopwords_param + nlplot_instance.default_stopwords))
+    current_stopwords = list(set(sw.lower() for sw in stopwords_param + nlplot_instance.default_stopwords))
     nlplot_instance.df_edit = nlplot_instance.df.copy()
-    nlplot_instance.df_edit.loc[:, nlplot_instance.target_col] = nlplot_instance.df_edit[nlplot_instance.target_col].apply(lambda doc: list(set(w for w in doc if w not in current_stopwords)) if isinstance(doc, list) else [])
+    nlplot_instance.df_edit.loc[:, nlplot_instance.target_col] = nlplot_instance.df_edit[nlplot_instance.target_col].apply(lambda doc: list(set(w.lower() for w in doc if w.lower() not in current_stopwords)) if isinstance(doc, list) else [])
     nlplot_instance._batches = nlplot_instance.df_edit[nlplot_instance.target_col].tolist()
 
 def _initialize_empty_graph_attributes(nlplot_instance, graph_exists_but_no_nodes=False):
