@@ -33,7 +33,7 @@ def get_nlplot_instance_for_traditional_nlp(input_text_lines: list[str], languag
     tokenized_lines = []
     import re
 
-    if language == language_options[1]: # "Japanese (Janome for tokenization)"
+    if "Japanese" in language:
         if os.path.exists(DEFAULT_JP_FONT_PATH):
             font_to_use = DEFAULT_JP_FONT_PATH
         else:
@@ -56,6 +56,7 @@ def get_nlplot_instance_for_traditional_nlp(input_text_lines: list[str], languag
             for line in input_text_lines:
                 tokenized_lines.append(list(line)) # Fallback to char split
     else:  # English (Space-separated)
+        import re
         for line in input_text_lines:
             line_cleaned = re.sub(r'[^\w\s]', '', line).lower()
             tokenized_lines.append(line_cleaned.split())
