@@ -64,7 +64,10 @@ def get_nlplot_instance_for_traditional_nlp(input_text_lines: list[str], languag
                 # st.warning("Janome not available, falling back to space separation for Japanese.")
                 pass
             for line in input_text_lines:
-                tokenized_lines.append(line.split())
+                # Remove punctuation and convert to lowercase before splitting
+                import re
+                line_cleaned = re.sub(r'[^\w\s]', '', line).lower()
+                tokenized_lines.append(line_cleaned.split())
         df = pd.DataFrame({target_column_name: tokenized_lines})
 
     # NLPlotLLMインスタンス生成時にfont_pathを渡す

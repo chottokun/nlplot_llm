@@ -20,7 +20,7 @@ def get_edges_nodes(nlplot_instance, batches: list, min_edge_frequency: int) -> 
     edge_dict = {}
     for batch in batches:
         if isinstance(batch, list) and batch:
-            unique_elements_in_batch = list(set(batch))
+            unique_elements_in_batch = batch
             if len(unique_elements_in_batch) >= 2:
                 edge_dict = _add_unique_combinations_to_dict(_unique_combinations_for_edges(unique_elements_in_batch), edge_dict)
     source, target, edge_frequency_list = [], [], []
@@ -84,19 +84,29 @@ def build_graph(nlplot_instance, stopwords: list = [], min_edge_frequency: int =
     print(f'node_size:{len(nlplot_instance.node_df)}, edge_size:{len(nlplot_instance.edge_df if hasattr(nlplot_instance, "edge_df") else [])}')
     return None
 
+import re
+
 def _prepare_data_for_graph(nlplot_instance, stopwords_param: list):
-    current_stopwords = list(set(sw.lower() for sw in stopwords_param + nlplot_instance.default_stopwords))
-    print(f"DEBUG: Current Stopwords: {current_stopwords}")  # Debug print
+    current_stopwords = set(sw.lower() for sw in stopwords_param + nlplot_instance.default_stopwords)
+    print(f"DEBUG: Current Stopwords: {current_stopwords}")
     nlplot_instance.df_edit = nlplot_instance.df.copy()
+
     def process_doc(doc):
         if not isinstance(doc, list):
+            print(f"DEBUG: doc is not a list: {doc}")
             return []
-        original_words = [w.lower() for w in doc]
-        filtered_words = [w for w in original_words if w not in current_stopwords]
-        print(f"DEBUG: Original: {original_words}, Filtered: {filtered_words}") # Debug print
-        return list(set(filtered_words))
+
+        words = [re.sub(r'[^\w\s]', '', w).lower() for w in doc]
+        print(f"DEBUG: Original words (after lower/punct): {words}")
+
+        filtered_words = [w for w in words if w and w not in current_stopwords]
+        print(f"DEBUG: Filtered words: {filtered_words}")
+
+        return filtered_words
+
     nlplot_instance.df_edit.loc[:, nlplot_instance.target_col] = nlplot_instance.df_edit[nlplot_instance.target_col].apply(process_doc)
     nlplot_instance._batches = nlplot_instance.df_edit[nlplot_instance.target_col].tolist()
+    print(f"DEBUG: Final batches: {nlplot_instance._batches}")
 
 def _initialize_empty_graph_attributes(nlplot_instance, graph_exists_but_no_nodes=False):
     nlplot_instance.G = nx.Graph()
