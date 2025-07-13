@@ -52,7 +52,7 @@ def word_distribution(nlplot_instance, title: str = None, xaxis_label: str = '',
     if save: nlplot_instance.save_plot(fig, title if title else "word_distribution")
     return fig
 
-def wordcloud(nlplot_instance, width: int = 800, height: int = 500, max_words: int = 100, max_font_size: int = 80, stopwords: list = [], colormap: str = None, mask_file: str = None, font_path: str = None, save: bool = False) -> None:
+def wordcloud(nlplot_instance, width: int = 800, height: int = 500, max_words: int = 100, max_font_size: int = 80, stopwords: list = [], colormap: str = None, mask_file: str = None, font_path: str = None, save: bool = False) -> Optional[Image.Image]:
     wc_font_path = None
     if font_path is not None:
         if os.path.exists(font_path):
