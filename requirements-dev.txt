@@ -11,3 +11,5 @@ ipython
 scikit-learn
 pytest
 flake8
+nbformat>=4.2.0
+pytest-asyncio

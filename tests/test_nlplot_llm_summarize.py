@@ -48,14 +48,9 @@ def npt_llm_summarize_instance(tmp_path):
 
 # --- TDD for LLM Text Summarization ---
 
-def test_summarize_text_llm_initial_method_missing(npt_llm_summarize_instance):
-    """(Red Phase) Ensure summarize_text_llm method is initially missing."""
-    with pytest.raises(AttributeError, match="'NLPlotLLM' object has no attribute 'summarize_text_llm'"): # Updated class name
-        npt_llm_summarize_instance.summarize_text_llm(
-            text_series=pd.Series(["A long piece of text to be summarized."]),
-            llm_provider="openai",
-            model_name="gpt-3.5-turbo"
-        )
+def test_summarize_text_llm_initial_method_exists(npt_llm_summarize_instance):
+    """Ensure summarize_text_llm method exists."""
+    assert hasattr(npt_llm_summarize_instance, 'summarize_text_llm')
 
 # Further tests for Green/Refactor phase will be added below.
 
@@ -155,8 +150,8 @@ def test_summarize_text_llm_api_error(mock_litellm_completion, npt_llm_summarize
 
 # Tests for chunking logic with LiteLLM
 
-@patch('litellm.completion')
-@patch('nlplot_llm.core.NLPlotLLM._chunk_text')
+@patch('nlplot_llm.llm.summarize.litellm.completion')
+@patch('nlplot_llm.llm.summarize._chunk_text')
 def test_summarize_text_llm_with_chunking_and_combine(mock_chunk_text, mock_litellm_completion, npt_llm_summarize_instance):
     if not LITELLM_AVAILABLE_FOR_TEST_SUMMARIZE or not MODULE_LANGCHAIN_AVAILABLE_SUMMARIZE:
         pytest.skip("LiteLLM or its dependencies not available.")
@@ -217,8 +212,8 @@ def test_summarize_text_llm_with_chunking_and_combine(mock_chunk_text, mock_lite
     assert f"Final Combined Summary Raw:" in raw_output
 
 
-@patch('litellm.completion')
-@patch('nlplot_llm.core.NLPlotLLM._chunk_text')
+@patch('nlplot_llm.llm.summarize.litellm.completion')
+@patch('nlplot_llm.llm.summarize._chunk_text')
 def test_summarize_text_llm_chunking_no_combine_prompt(mock_chunk_text, mock_litellm_completion, npt_llm_summarize_instance):
     if not LITELLM_AVAILABLE_FOR_TEST_SUMMARIZE or not MODULE_LANGCHAIN_AVAILABLE_SUMMARIZE:
         pytest.skip("LiteLLM not available.")
@@ -305,7 +300,7 @@ def test_summarize_text_llm_invalid_direct_prompt(npt_llm_summarize_instance):
     mock_print.assert_any_call("Error: Direct summarization prompt template must include '{text}' placeholder.")
 
 
-@patch('nlplot_llm.core.NLPlotLLM._chunk_text') # Mock chunking to focus on prompt error
+@patch('nlplot_llm.llm.summarize._chunk_text') # Mock chunking to focus on prompt error
 def test_summarize_text_llm_invalid_chunk_prompt(mock_chunk_text, npt_llm_summarize_instance):
     if not MODULE_LANGCHAIN_AVAILABLE_SUMMARIZE:
         pytest.skip("LiteLLM not available.")
@@ -324,8 +319,8 @@ def test_summarize_text_llm_invalid_chunk_prompt(mock_chunk_text, npt_llm_summar
     assert "Chunk prompt template error: missing {text}" in result_df.iloc[0]["raw_llm_output"]
 
 
-@patch('nlplot_llm.core.NLPlotLLM._chunk_text')
-@patch('litellm.completion')
+@patch('nlplot_llm.llm.summarize._chunk_text')
+@patch('nlplot_llm.llm.summarize.litellm.completion')
 def test_summarize_text_llm_invalid_combine_prompt(mock_litellm_completion, mock_chunk_text, npt_llm_summarize_instance):
     if not MODULE_LANGCHAIN_AVAILABLE_SUMMARIZE:
         pytest.skip("LiteLLM not available.")
@@ -392,4 +387,4 @@ def test_summarize_text_llm_chunking_true_but_splitters_unavailable(mock_litellm
     args, kwargs = mock_litellm_completion.call_args
     # Check if the prompt used was the default direct summarization prompt
     assert "Please summarize the following text concisely: {text}".format(text=test_text) in kwargs['messages'][0]['content']
-```
+

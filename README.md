@@ -35,6 +35,10 @@
 - Asynchronous operations (`*_async` methods)  
 - Helpers for text chunking (via Langchain TextSplitters)  
 
+### Additional Traditional NLP Features
+- TF-IDF top N features extraction (overall corpus / per document) using [scikit-learn](https://scikit-learn.org/stable/modules/generated/sklearn.feature_extraction.text.TfidfVectorizer.html)
+- Keyword in Context (KWIC) display
+
 ## Installation
 
 ### From GitHub (latest)
@@ -59,6 +63,12 @@ Installs core dependencies (`litellm`, `diskcache`, `langchain-text-splitters`, 
 
 ```bash
 pip install janome
+```
+
+- TF-IDF and other scikit-learn based features:
+
+```bash
+pip install scikit-learn
 ```
 
 - Development requirements:
@@ -110,11 +120,24 @@ A demo app (`streamlit_app.py`) showcases LLM integration.
 
 ```bash
 # From repo root
-pip install streamlit nlplot_llm pandas litellm langchain-text-splitters
+pip install streamlit nlplot_llm pandas litellm langchain-text-splitters scikit-learn janome
 streamlit run streamlit_app.py
 ```
 
-Use the sidebar to choose model, prompts, caching, and analysis type.
+Use the sidebar to choose model, prompts, caching, and analysis type. The demo now includes TF-IDF top features and Keyword in Context (KWIC) functionalities.
+
+## Streamlit Demo Notes
+
+### Japanese Word Cloud Font
+To correctly display Japanese characters in word clouds within the Streamlit demo, a Japanese-compatible font file is required.
+
+1.  **Recommended Font**: We recommend using [IPAexGothic (ipaexg.ttf)](https://moji.or.jp/ipafont/ipaex00401/). Download `ipaexg00401.zip` from the link and extract `ipaexg.ttf`.
+2.  **Placement**:
+    *   Create a directory named `fonts` in the root of this repository if it doesn't already exist.
+    *   Place the `ipaexg.ttf` file into this `fonts` directory (i.e., the path should be `fonts/ipaexg.ttf` from the repository root).
+3.  **Usage**: The Streamlit application (`streamlit_app.py`) is configured to automatically look for this font at `fonts/ipaexg.ttf` when "Japanese" is selected as the language for traditional NLP tasks like Word Cloud.
+
+If this font file is not found at the specified location, Japanese characters in word clouds may not render correctly, and you might see garbled text or empty squares.
 
 ## Documentation
 

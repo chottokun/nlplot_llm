@@ -214,4 +214,4 @@ def test_cache_works_for_categorize_llm(mock_litellm_completion, npt_cache_test_
     assert mock_litellm_completion.call_count == 1
     npt.categorize_text_llm(sample_text_series, categories=categories, model="test/model_cat_cache")
     assert mock_litellm_completion.call_count == 1 # Should still be 1
-```
+
