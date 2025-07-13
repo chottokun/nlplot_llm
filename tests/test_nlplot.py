@@ -1,18 +1,14 @@
-from nlplot_llm.core import NLPlotLLM as NLPlotLLM
-# Alias NLPlot to NLPlotLLM to fix import errors in tests
-NLPlot = NLPlotLLM
 import pandas as pd
 import pytest
 import plotly.graph_objs
 import numpy as np
 import os
-from unittest.mock import patch, mock_open, MagicMock
-from PIL import Image # For mocking Image.open related errors
-import datetime # For predictable date string in file save tests
+from unittest.mock import patch, MagicMock
+from PIL import Image
+import datetime
 
-
-from nlplot_llm import NLPlotLLM, get_colorpalette, generate_freq_df
-from nlplot_llm.core import DEFAULT_FONT_PATH as NLPLOT_LLM_DEFAULT_FONT_PATH # Import for mocking
+from nlplot_llm import NLPlotLLM
+from nlplot_llm.core import DEFAULT_FONT_PATH as NLPLOT_LLM_DEFAULT_FONT_PATH
 
 # Helper to create a dummy font file if it doesn't exist.
 def ensure_font_file_exists(font_path_to_check = NLPLOT_LLM_DEFAULT_FONT_PATH):

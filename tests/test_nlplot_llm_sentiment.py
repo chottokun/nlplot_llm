@@ -52,19 +52,14 @@ def npt_llm_instance(tmp_path):
 
 # --- TDD for LLM Sentiment Analysis (Cycle 2) ---
 
-def test_analyze_sentiment_llm_initial_method_missing(npt_llm_instance):
-    """(Red Phase) Ensure analyze_sentiment_llm method is initially missing."""
-    with pytest.raises(AttributeError, match="'NLPlotLLM' object has no attribute 'analyze_sentiment_llm'"): # Updated class name
-        npt_llm_instance.analyze_sentiment_llm(
-            text_series=pd.Series(["a test sentence"]),
-            llm_provider="openai",
-            model_name="gpt-3.5-turbo"
-        )
+def test_analyze_sentiment_llm_initial_method_exists(npt_llm_instance):
+    """Ensure analyze_sentiment_llm method exists."""
+    assert hasattr(npt_llm_instance, 'analyze_sentiment_llm')
 
 # The tests below are for the Green/Refactor phase, once analyze_sentiment_llm is implemented.
 # They assume _get_llm_client is functional and correctly mocked where necessary. # This comment is now outdated.
 
-@patch('litellm.completion') # Changed patch target to litellm.completion
+@patch('nlplot_llm.llm.sentiment.litellm.completion')
 def test_analyze_sentiment_llm_openai_positive(mock_litellm_completion, npt_llm_instance):
     if not LITELLM_AVAILABLE_FOR_TEST: # Check if litellm itself is available for test run
         pytest.skip("LiteLLM not available, skipping LLM sentiment test.")
@@ -110,7 +105,7 @@ def test_analyze_sentiment_llm_openai_positive(mock_litellm_completion, npt_llm_
     assert result_df.iloc[0]["raw_llm_output"] == "positive"
 
 
-@patch('litellm.completion')
+@patch('nlplot_llm.llm.sentiment.litellm.completion')
 def test_analyze_sentiment_llm_ollama_negative(mock_litellm_completion, npt_llm_instance):
     if not LITELLM_AVAILABLE_FOR_TEST or not MODULE_LANGCHAIN_AVAILABLE: # MODULE_LANGCHAIN_AVAILABLE is now LITELLM_AVAILABLE in core
         pytest.skip("LiteLLM not available, skipping.")
@@ -145,7 +140,7 @@ def test_analyze_sentiment_llm_ollama_negative(mock_litellm_completion, npt_llm_
     assert result_df.iloc[0]["raw_llm_output"] == " negative "
 
 
-@patch('litellm.completion')
+@patch('nlplot_llm.llm.sentiment.litellm.completion')
 def test_analyze_sentiment_llm_neutral_and_unknown_output(mock_litellm_completion, npt_llm_instance):
     if not LITELLM_AVAILABLE_FOR_TEST or not MODULE_LANGCHAIN_AVAILABLE:
         pytest.skip("LiteLLM not available.")
@@ -185,7 +180,7 @@ def test_analyze_sentiment_llm_empty_series_input(npt_llm_instance):
     assert list(result_df.columns) == ["text", "sentiment", "raw_llm_output"]
 
 
-@patch('litellm.completion')
+@patch('nlplot_llm.llm.sentiment.litellm.completion')
 # No need to mock PromptTemplate from core if we are using basic string formatting
 # Or if we assume PromptTemplate is always available via langchain_core
 def test_analyze_sentiment_llm_custom_prompt(mock_litellm_completion, npt_llm_instance):
@@ -216,7 +211,7 @@ def test_analyze_sentiment_llm_custom_prompt(mock_litellm_completion, npt_llm_in
     )
 
 
-@patch('litellm.completion')
+@patch('nlplot_llm.llm.sentiment.litellm.completion')
 def test_analyze_sentiment_llm_api_error(mock_litellm_completion, npt_llm_instance):
     if not LITELLM_AVAILABLE_FOR_TEST or not MODULE_LANGCHAIN_AVAILABLE:
         pytest.skip("LiteLLM not available.")
@@ -246,7 +241,7 @@ def test_analyze_sentiment_llm_api_error(mock_litellm_completion, npt_llm_instan
         (Exception, "Generic Exception") # Fallback for other unexpected errors
     ]
 )
-@patch('litellm.completion')
+@patch('nlplot_llm.llm.sentiment.litellm.completion')
 def test_analyze_sentiment_llm_various_api_errors(mock_litellm_completion, exception_type, error_message_detail, npt_llm_instance):
     if not LITELLM_AVAILABLE_FOR_TEST or not MODULE_LANGCHAIN_AVAILABLE:
         pytest.skip("LiteLLM not available for API error tests.")
@@ -298,7 +293,7 @@ def test_analyze_sentiment_llm_invalid_prompt_template(npt_llm_instance):
     mock_print.assert_any_call("Error: Prompt template must include '{text}' placeholder.")
 
 
-@patch('litellm.completion')
+@patch('nlplot_llm.llm.sentiment.litellm.completion')
 def test_analyze_sentiment_llm_empty_text_in_series(mock_litellm_completion, npt_llm_instance):
     """Tests that empty strings in series are handled correctly (e.g., marked neutral, no LLM call)."""
     if not MODULE_LANGCHAIN_AVAILABLE:

@@ -51,20 +51,9 @@ def npt_llm_instance_cat(tmp_path): # Renamed fixture for clarity
 
 # --- TDD for LLM Text Categorization (Cycle 3) ---
 
-def test_categorize_text_llm_initial_method_missing(npt_llm_instance_cat):
-    """(Red Phase) Ensure categorize_text_llm method is initially missing."""
-    # This test might be obsolete if the method already exists from previous work.
-    # If it's already there, this will fail. We are now focusing on adapting to LiteLLM.
-    # For now, keep it to ensure no regressions if method was accidentally removed.
-    # Match should be NLPlotLLM now.
-    with pytest.raises(AttributeError, match="'NLPlotLLM' object has no attribute 'categorize_text_llm'"):
-        npt_llm_instance_cat.categorize_text_llm(
-            text_series=pd.Series(["a test sentence for categorization"]),
-            categories=["news", "sports", "weather"], # Example categories
-            llm_provider="openai",
-            model_name="gpt-3.5-turbo"
-            # Add other required args if any, once signature is defined
-        )
+def test_categorize_text_llm_initial_method_exists(npt_llm_instance_cat):
+    """Ensure categorize_text_llm method exists."""
+    assert hasattr(npt_llm_instance_cat, 'categorize_text_llm')
 
 # The tests below are for the Green/Refactor phase, once categorize_text_llm is implemented.
 # These will need to be adapted for LiteLLM.
