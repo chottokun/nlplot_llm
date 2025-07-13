@@ -33,7 +33,7 @@ def get_nlplot_instance_for_traditional_nlp(input_text_lines: list[str], languag
     tokenized_lines = []
     import re
 
-    if "Japanese" in language:
+    if language == language_options[1] and JANOME_AVAILABLE:
         if os.path.exists(DEFAULT_JP_FONT_PATH):
             font_to_use = DEFAULT_JP_FONT_PATH
         else:
