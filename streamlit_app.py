@@ -29,47 +29,42 @@ def get_nlplot_instance_for_traditional_nlp(input_text_lines: list[str], languag
     Tokenizes input text based on the selected language.
     Uses a specific Japanese font for word clouds if language is Japanese and font exists.
     """
-    font_to_use = None # Default font path
+    font_to_use = None
+    tokenized_lines = []
+    import re
+
     if language == language_options[1]: # "Japanese (Janome for tokenization)"
-        if os.path.exists(DEFAULT_JP_FONT_PATH): # DEFAULT_JP_FONT_PATH is defined globally
+        if os.path.exists(DEFAULT_JP_FONT_PATH):
             font_to_use = DEFAULT_JP_FONT_PATH
         else:
             st.warning(
-                f"推奨される日本語フォントファイルが見つかりません: {DEFAULT_JP_FONT_PATH}. "
-                "Word Cloudの日本語表示が正しく行われない可能性があります。"
-                "README.mdの手順に従い、`fonts/ipaexg.ttf` を配置してください。"
+                f"Recommended Japanese font not found: {DEFAULT_JP_FONT_PATH}. "
+                "Word Cloud display for Japanese may not work correctly. "
+                "Please follow the instructions in README.md to place `fonts/ipaexg.ttf`."
             )
-
-    t_janome = None
-    if language == language_options[1] and JANOME_AVAILABLE: # "Japanese (Janome for tokenization)"
-        try:
-            from janome.tokenizer import Tokenizer as JanomeTokenizer # Local import
-            t_janome = JanomeTokenizer(wakati=True)
-        except Exception as e:
-            st.error(f"Failed to initialize Janome Tokenizer: {e}")
-            # Fallback to space splitting will occur if t_janome remains None
+        if JANOME_AVAILABLE:
+            try:
+                from janome.tokenizer import Tokenizer as JanomeTokenizer
+                t_janome = JanomeTokenizer(wakati=True)
+                for line in input_text_lines:
+                    tokenized_lines.append(list(t_janome.tokenize(line)))
+            except Exception as e:
+                st.error(f"Failed to initialize Janome Tokenizer: {e}")
+                for line in input_text_lines:
+                    tokenized_lines.append(list(line)) # Fallback to char split
+        else:
+            for line in input_text_lines:
+                tokenized_lines.append(list(line)) # Fallback to char split
+    else:  # English (Space-separated)
+        for line in input_text_lines:
+            line_cleaned = re.sub(r'[^\w\s]', '', line).lower()
+            tokenized_lines.append(line_cleaned.split())
 
     if not input_text_lines:
-        # Warning is now issued when `lines` is empty before calling this function.
         df = pd.DataFrame({target_column_name: pd.Series([], dtype='object')})
     else:
-        tokenized_lines = []
-        if language == language_options[1] and JANOME_AVAILABLE and t_janome:
-            for line in input_text_lines:
-                tokens = list(t_janome.tokenize(line))
-                tokenized_lines.append(tokens)
-        else: # Fallback or English processing
-            import re
-            if language == language_options[0]: # English
-                for line in input_text_lines:
-                    line_cleaned = re.sub(r'[^\w\s]', '', line).lower()
-                    tokenized_lines.append(line_cleaned.split())
-            else: # Fallback for Japanese when Janome is not available
-                for line in input_text_lines:
-                    tokenized_lines.append(line.split())
         df = pd.DataFrame({target_column_name: tokenized_lines})
 
-    # NLPlotLLMインスタンス生成時にfont_pathを渡す
     return NLPlotLLM(df, target_col=target_column_name, font_path=font_to_use, use_cache=False)
 
 

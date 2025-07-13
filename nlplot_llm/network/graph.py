@@ -18,11 +18,21 @@ def get_edges_nodes(nlplot_instance, batches: list, min_edge_frequency: int) -> 
     if not isinstance(min_edge_frequency, int) or min_edge_frequency < 0:
         raise ValueError("min_edge_frequency must be a non-negative integer.")
     edge_dict = {}
-    for batch in batches:
+    print(f"DEBUG: Initial edge_dict: {edge_dict}")
+    for i, batch in enumerate(batches):
+        print(f"DEBUG: Processing batch {i}: {batch}")
         if isinstance(batch, list) and batch:
-            unique_elements_in_batch = batch
+            unique_elements_in_batch = list(set(batch))
+            print(f"DEBUG: Unique elements in batch {i}: {unique_elements_in_batch}")
             if len(unique_elements_in_batch) >= 2:
-                edge_dict = _add_unique_combinations_to_dict(_unique_combinations_for_edges(unique_elements_in_batch), edge_dict)
+                combinations = _unique_combinations_for_edges(unique_elements_in_batch)
+                print(f"DEBUG: Combinations for batch {i}: {combinations}")
+                edge_dict = _add_unique_combinations_to_dict(combinations, edge_dict)
+                print(f"DEBUG: edge_dict after batch {i}: {edge_dict}")
+            else:
+                print(f"DEBUG: Batch {i} has less than 2 unique elements.")
+        else:
+            print(f"DEBUG: Batch {i} is not a valid list.")
     source, target, edge_frequency_list = [], [], []
     for key, value in edge_dict.items():
         source.append(key[0])
