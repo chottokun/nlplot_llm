@@ -58,16 +58,15 @@ def get_nlplot_instance_for_traditional_nlp(input_text_lines: list[str], languag
             for line in input_text_lines:
                 tokens = list(t_janome.tokenize(line))
                 tokenized_lines.append(tokens)
-        else: # Default to space splitting (English or fallback for Japanese if Janome fails/unavailable)
-            if language == language_options[1] and not JANOME_AVAILABLE:
-                # This warning is now displayed below the radio button, but good to be defensive.
-                # st.warning("Janome not available, falling back to space separation for Japanese.")
-                pass
-            for line in input_text_lines:
-                # Remove punctuation and convert to lowercase before splitting
-                import re
-                line_cleaned = re.sub(r'[^\w\s]', '', line).lower()
-                tokenized_lines.append(line_cleaned.split())
+        else: # Fallback or English processing
+            import re
+            if language == language_options[0]: # English
+                for line in input_text_lines:
+                    line_cleaned = re.sub(r'[^\w\s]', '', line).lower()
+                    tokenized_lines.append(line_cleaned.split())
+            else: # Fallback for Japanese when Janome is not available
+                for line in input_text_lines:
+                    tokenized_lines.append(line.split())
         df = pd.DataFrame({target_column_name: tokenized_lines})
 
     # NLPlotLLMインスタンス生成時にfont_pathを渡す
