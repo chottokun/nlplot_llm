@@ -2,6 +2,7 @@ import pytest
 import asyncio
 import pandas as pd
 from unittest.mock import patch, MagicMock, AsyncMock
+import litellm
 
 from nlplot_llm import NLPlotLLM
 from nlplot_llm.core import LITELLM_AVAILABLE, DISKCACHE_AVAILABLE

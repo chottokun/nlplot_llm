@@ -24,8 +24,9 @@ except ImportError:
         def split_text(self, text): return [text] if text else []
 
     class CharacterTextSplitter:
-        def __init__(self, separator, chunk_size, chunk_overlap, length_function=None, **kwargs): pass
-        def split_text(self, text): return text.split(separator) if text else []
+        def __init__(self, separator, chunk_size, chunk_overlap, length_function=None, **kwargs):
+            self.separator = separator
+        def split_text(self, text): return text.split(self.separator) if text else []
 
 
 @pytest.fixture
