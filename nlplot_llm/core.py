@@ -115,13 +115,14 @@ class NLPlotLLM():
 
         if not self.df.empty and self.target_col in self.df.columns:
             first_item = self.df[self.target_col].iloc[0]
-            # Process if the first item is a string and not already a list (for auto-splitting)
-            if pd.notna(first_item):
-                # This check ensures we only try to split if it's a non-NA value.
-                # Convert to string and split for any type, to ensure list of tokens.
+            # Handle cases where the item might be a list
+            if isinstance(first_item, list):
+                # If it's a list, we assume it's already tokenized.
+                # The check for pd.notna below would fail on a list.
+                pass
+            elif pd.notna(first_item):
+                # If it's a non-NA scalar, treat it as a string to be split.
                 self.df.loc[:, self.target_col] = self.df[self.target_col].astype(str).map(lambda x: x.split())
-            # If first_item is already a list,
-            # we assume it's either correctly pre-processed or not intended for splitting here.
         elif self.df.empty and self.target_col not in self.df.columns :
              print(f"Warning: DataFrame is empty and target column '{self.target_col}' not found. Initializing with an empty column.")
              self.df = pd.DataFrame({self.target_col: pd.Series([], dtype=object)})
