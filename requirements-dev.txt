@@ -13,3 +13,5 @@ pytest
 flake8
 nbformat>=4.2.0
 pytest-asyncio
+sphinx
+sphinx_rtd_theme
