@@ -15,3 +15,6 @@ nbformat>=4.2.0
 pytest-asyncio
 sphinx
 sphinx_rtd_theme
+litellm
+langchain-text-splitters
+python-louvain
