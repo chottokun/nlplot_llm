@@ -32,8 +32,13 @@ except ImportError:
         ):
             pass
 
+        def __init__(
+            self, separator, chunk_size, chunk_overlap, length_function=None, **kwargs
+        ):
+            self.separator = separator
+
         def split_text(self, text):
-            return text.split(separator) if text else []
+            return text.split(self.separator) if text else []
 
 
 @pytest.fixture
