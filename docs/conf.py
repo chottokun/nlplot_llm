@@ -19,11 +19,11 @@ sys.path.insert(0, os.path.abspath(".."))  # Point to the project root
 # -- Project information -----------------------------------------------------
 
 project = "nlplot_llm"
-copyright = "2021-2024, Takanobu Nozawa"
-author = "Takanobu Nozawa"
+copyright = "Original: nlplot 2021-2024, Takanobu Nozawa, nlplot_llm 2025-, Chottokun"
+author = "Chottokun"
 
 # The full version, including alpha/beta/rc tags
-release = "0.1.0"
+release = "0.1.1"
 
 
 # -- General configuration ---------------------------------------------------
