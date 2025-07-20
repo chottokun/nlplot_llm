@@ -2,7 +2,6 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from wordcloud import WordCloud
 from typing import Optional, List
 
 # Assuming these are in the same package or accessible
@@ -29,19 +28,33 @@ def bar_ngram(
     """
     Generates a bar chart for n-gram frequencies.
 
-    Args:
-        nlplot_instance: An instance of the NLPlot class.
-        title (str): The title of the chart.
-        xaxis_title (str): The title for the x-axis.
-        yaxis_title (str): The title for the y-axis.
-        ngram (int): The 'n' in n-gram.
-        top_n (int): The number of top n-grams to display.
-        width (int): The width of the figure.
-        height (int): The height of the figure.
-        color (Optional[str]): A specific color for the bars.
-        color_palette (str): The color palette to use if `color` is not
-                             set.
-        save (bool): Whether to save the plot as an HTML file.
+def wordcloud(nlplot_instance, width: int = 800, height: int = 500, max_words: int = 100, max_font_size: int = 80, stopwords: list = [], colormap: str = None, mask_file: str = None, font_path: str = None, save: bool = False) -> Optional[Image.Image]:
+    wc_font_path = None
+    if font_path is not None:
+        if os.path.exists(font_path):
+            wc_font_path = font_path
+        else:
+            print(f"Warning: Specified font_path '{font_path}' for wordcloud not found. Will attempt to use WordCloud default.")
+    elif nlplot_instance.font_path is not None:
+        if os.path.exists(nlplot_instance.font_path):
+            wc_font_path = nlplot_instance.font_path
+        else:
+            print(f"Warning: Instance font_path '{nlplot_instance.font_path}' not found. Will attempt to use WordCloud default.")
+>>>>>>> main
+=======
+def wordcloud(nlplot_instance, width: int = 800, height: int = 500, max_words: int = 100, max_font_size: int = 80, stopwords: list = [], colormap: str = None, mask_file: str = None, font_path: str = None, save: bool = False) -> Optional[Image.Image]:
+    wc_font_path = None
+    if font_path is not None:
+        if os.path.exists(font_path):
+            wc_font_path = font_path
+        else:
+            print(f"Warning: Specified font_path '{font_path}' for wordcloud not found. Will attempt to use WordCloud default.")
+    elif nlplot_instance.font_path is not None:
+        if os.path.exists(nlplot_instance.font_path):
+            wc_font_path = nlplot_instance.font_path
+        else:
+            print(f"Warning: Instance font_path '{nlplot_instance.font_path}' not found. Will attempt to use WordCloud default.")
+>>>>>>> main
 
     Returns:
         A Plotly Figure object.
@@ -51,7 +64,7 @@ def bar_ngram(
         nlplot_instance.df[nlplot_instance.target_col],
         n_gram=ngram,
         top_n=top_n,
-        stopwords=stopwords,
+        stopwords=stopwords if stopwords is not None else [],
     )
 
     # Determine colors for the chart
@@ -118,7 +131,7 @@ def treemap(
         nlplot_instance.df[nlplot_instance.target_col],
         n_gram=ngram,
         top_n=top_n,
-        stopwords=stopwords,
+        stopwords=stopwords if stopwords is not None else [],
     )
 
     # Create the figure
