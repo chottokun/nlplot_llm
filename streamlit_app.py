@@ -662,7 +662,7 @@ if st.button(f"Run {analysis_type}"):
                             ngram=ngram_type_selected,
                             top_n=ngram_top_n_selected,
                             stopwords=stopwords_list,
-                            verbose=False,
+                            
                         )
                         if fig_bar and fig_bar.data:
                             st.plotly_chart(
@@ -684,7 +684,7 @@ if st.button(f"Run {analysis_type}"):
                             ngram=ngram_type_selected,
                             top_n=ngram_top_n_selected,
                             stopwords=stopwords_list,
-                            verbose=False,
+                            
                         )
                         if fig_treemap and fig_treemap.data:
                             st.plotly_chart(
