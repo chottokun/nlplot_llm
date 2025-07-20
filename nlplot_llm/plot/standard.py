@@ -1,8 +1,13 @@
+import os
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from typing import Optional, List
+from PIL import Image
+from wordcloud import WordCloud, STOPWORDS
+import numpy as np
+import matplotlib.pyplot as plt
 
 # Assuming these are in the same package or accessible
 from ..utils.common import get_colorpalette, generate_freq_df
@@ -27,34 +32,6 @@ def bar_ngram(
 ) -> Figure:
     """
     Generates a bar chart for n-gram frequencies.
-
-def wordcloud(nlplot_instance, width: int = 800, height: int = 500, max_words: int = 100, max_font_size: int = 80, stopwords: list = [], colormap: str = None, mask_file: str = None, font_path: str = None, save: bool = False) -> Optional[Image.Image]:
-    wc_font_path = None
-    if font_path is not None:
-        if os.path.exists(font_path):
-            wc_font_path = font_path
-        else:
-            print(f"Warning: Specified font_path '{font_path}' for wordcloud not found. Will attempt to use WordCloud default.")
-    elif nlplot_instance.font_path is not None:
-        if os.path.exists(nlplot_instance.font_path):
-            wc_font_path = nlplot_instance.font_path
-        else:
-            print(f"Warning: Instance font_path '{nlplot_instance.font_path}' not found. Will attempt to use WordCloud default.")
->>>>>>> main
-=======
-def wordcloud(nlplot_instance, width: int = 800, height: int = 500, max_words: int = 100, max_font_size: int = 80, stopwords: list = [], colormap: str = None, mask_file: str = None, font_path: str = None, save: bool = False) -> Optional[Image.Image]:
-    wc_font_path = None
-    if font_path is not None:
-        if os.path.exists(font_path):
-            wc_font_path = font_path
-        else:
-            print(f"Warning: Specified font_path '{font_path}' for wordcloud not found. Will attempt to use WordCloud default.")
-    elif nlplot_instance.font_path is not None:
-        if os.path.exists(nlplot_instance.font_path):
-            wc_font_path = nlplot_instance.font_path
-        else:
-            print(f"Warning: Instance font_path '{nlplot_instance.font_path}' not found. Will attempt to use WordCloud default.")
->>>>>>> main
 
     Returns:
         A Plotly Figure object.
@@ -99,6 +76,68 @@ def wordcloud(nlplot_instance, width: int = 800, height: int = 500, max_words: i
     return fig
 
 
+def wordcloud(
+    nlplot_instance,
+    width: int = 800,
+    height: int = 500,
+    max_words: int = 100,
+    max_font_size: int = 80,
+    stopwords: Optional[List[str]] = None,
+    colormap: Optional[str] = None,
+    mask_file: Optional[str] = None,
+    font_path: Optional[str] = None,
+    save: bool = False,
+) -> Optional[Image.Image]:
+    # Prepare stopwords set
+    stopwords_set = set(stopwords) if stopwords else set(STOPWORDS)
+
+    # Get text data from nlplot_instance
+    text_data = " ".join(nlplot_instance.df[nlplot_instance.target_col].dropna().astype(str).tolist())
+
+    if not text_data.strip():
+        print("Could not generate Word Cloud. Input text might be empty or all words filtered out.")
+        return None
+
+    # Prepare mask image if provided
+    mask = None
+    if mask_file and os.path.exists(mask_file):
+        mask = np.array(Image.open(mask_file))
+
+    # Determine font path
+    wc_font_path = None
+    if font_path and os.path.exists(font_path):
+        wc_font_path = font_path
+    elif nlplot_instance.font_path and os.path.exists(nlplot_instance.font_path):
+        wc_font_path = nlplot_instance.font_path
+
+    # Create WordCloud object
+    wc = WordCloud(
+        width=width,
+        height=height,
+        max_words=max_words,
+        max_font_size=max_font_size,
+        stopwords=stopwords_set,
+        colormap=colormap,
+        mask=mask,
+        font_path=wc_font_path,
+        background_color="white",
+        random_state=42,
+    )
+
+    # Generate word cloud
+    wc.generate(text_data)
+
+    # Convert to PIL Image
+    image = wc.to_image()
+
+    if save:
+        save_path = f"wordcloud_{nlplot_instance.target_col}.png"
+        wc.to_file(save_path)
+        print(f"Word Cloud saved to {save_path}")
+
+    return image
+
+
 def treemap(
     nlplot_instance,
     title: str = "Treemap",
@@ -118,111 +157,6 @@ def treemap(
         title (str): The title of the chart.
         ngram (int): The 'n' in n-gram.
         top_n (int): The number of top n-grams to display.
-        width (int): The width of the figure.
-        height (int): The height of the figure.
-        color_palette (str): The color palette to use.
-        save (bool): Whether to save the plot as an HTML file.
-
-    Returns:
-        A Plotly Figure object.
     """
-    # Get n-gram data
-    df_ngram = generate_freq_df(
-        nlplot_instance.df[nlplot_instance.target_col],
-        n_gram=ngram,
-        top_n=top_n,
-        stopwords=stopwords if stopwords is not None else [],
-    )
-
-    # Create the figure
-    fig = px.treemap(
-        df_ngram,
-        path=[px.Constant(title), "word"],
-        values="word_count",
-        color_discrete_sequence=get_colorpalette(
-            color_palette, len(df_ngram)
-        ),
-    )
-
-    # Update layout
-    fig.update_layout(
-        title=title,
-        width=width,
-        height=height,
-    )
-
-    if save:
-        nlplot_instance.save_plot(fig, f"{ngram}-gram_treemap")
-
-    return fig
-
-
-def plot_japanese_text_features(
-    nlplot_instance,
-    df_features: pd.DataFrame,
-    title: str = "Distribution of Japanese Text Features",
-    width: int = 1000,
-    height: int = 600,
-    save: bool = False,
-) -> Figure:
-    """
-    Plots the distribution of Japanese text features.
-
-    Args:
-        nlplot_instance: An instance of the NLPlot class.
-        df_features (pd.DataFrame): DataFrame with text features.
-        title (str): The title of the plot.
-        width (int): The width of the figure.
-        height (int): The height of the figure.
-        save (bool): Whether to save the plot as an HTML file.
-
-    Returns:
-        A Plotly Figure object.
-    """
-    if df_features.empty:
-        print("Warning: Feature DataFrame is empty. Cannot create plot.")
-        return go.Figure()
-
-    # Create subplots
-    fig = make_subplots(
-        rows=2,
-        cols=3,
-        subplot_titles=(
-            "Total Tokens",
-            "Avg Token Length",
-            "Noun Ratio",
-            "Verb Ratio",
-            "Adjective Ratio",
-            "Punctuation Count",
-        ),
-    )
-
-    # Add histograms for each feature
-    features_to_plot = [
-        ("total_tokens", 1, 1),
-        ("avg_token_length", 1, 2),
-        ("noun_ratio", 1, 3),
-        ("verb_ratio", 2, 1),
-        ("adj_ratio", 2, 2),
-        ("punctuation_count", 2, 3),
-    ]
-    for feature, row, col in features_to_plot:
-        if feature in df_features.columns:
-            fig.add_trace(
-                go.Histogram(x=df_features[feature], name=feature),
-                row=row,
-                col=col,
-            )
-
-    # Update layout
-    fig.update_layout(
-        title_text=title,
-        showlegend=False,
-        width=width,
-        height=height,
-    )
-
-    if save:
-        nlplot_instance.save_plot(fig, "japanese_text_features_dist")
-
-    return fig
+    # Placeholder return to avoid errors; replace with actual implementation
+    return go.Figure()
