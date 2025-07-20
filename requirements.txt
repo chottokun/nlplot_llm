@@ -16,3 +16,4 @@ diskcache>=5.0.0 # Added diskcache for LLM response caching
 # langchain-openai
 # langchain-community
 # openai
+python-louvain
